@@ -6,11 +6,17 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Outline
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.FrameLayout
@@ -28,6 +34,11 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import com.group_a1.isocam.R
+import java.io.File
 
 class CameraActivity : ComponentActivity() {
 
@@ -66,19 +77,23 @@ class CameraActivity : ComponentActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // 1. sleek, thin '<' back button (shifted down to completely clear status bar)
-        val backButton = Button(this).apply {
+        // 1. sleek back button with circular background for high contrast
+        val backButton = TextView(this).apply {
             text = "‹"
-            setTextColor(android.graphics.Color.WHITE)
-            textSize = 40f
-            setTypeface(null, android.graphics.Typeface.NORMAL)
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setTextColor(Color.WHITE)
+            textSize = 36f
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(120, 0, 0, 0))
+            }
             setOnClickListener { finish() }
         }
-        val backParams = FrameLayout.LayoutParams(140, 140).apply {
+        val backParams = FrameLayout.LayoutParams(110, 110).apply {
             gravity = Gravity.TOP or Gravity.START
-            topMargin = 170
-            leftMargin = 30
+            topMargin = 120
+            leftMargin = 40
         }
         rootLayout.addView(backButton, backParams)
 
@@ -93,16 +108,34 @@ class CameraActivity : ComponentActivity() {
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            topMargin = 170
-            rightMargin = 50
+            topMargin = 120
+            rightMargin = 40
         }
         rootLayout.addView(previewContainer, previewParams)
 
+        // Dynamic Window Insets listener to position header controls safely below status bar/cutout on any device
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { _, insets ->
+            val statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val topMarginPx = if (statusBarHeight > 0) statusBarHeight + 24 else 120
+
+            (backButton.layoutParams as FrameLayout.LayoutParams).apply {
+                topMargin = topMarginPx
+            }
+            backButton.requestLayout()
+
+            (previewContainer.layoutParams as FrameLayout.LayoutParams).apply {
+                topMargin = topMarginPx
+            }
+            previewContainer.requestLayout()
+
+            insets
+        }
+
         // 3. snapchat-style circular ring drawable for capture button
-        val ringDrawable = android.graphics.drawable.GradientDrawable().apply {
-            shape = android.graphics.drawable.GradientDrawable.OVAL
-            setColor(android.graphics.Color.TRANSPARENT)
-            setStroke(10, android.graphics.Color.WHITE)
+        val ringDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.TRANSPARENT)
+            setStroke(10, Color.WHITE)
             alpha = 180
         }
 
@@ -184,7 +217,7 @@ class CameraActivity : ComponentActivity() {
     }
 
     private fun getRotatedBitmap(photoBytes: ByteArray): Bitmap {
-        val rawBitmap = android.graphics.BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size)
+        val rawBitmap = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size)
         val matrix = Matrix().apply { postRotate(90f) }
         return Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
     }
@@ -210,8 +243,8 @@ class CameraActivity : ComponentActivity() {
                 layoutParams = params
 
                 clipToOutline = true
-                outlineProvider = object : android.view.ViewOutlineProvider() {
-                    override fun getOutline(view: View, outline: android.graphics.Outline) {
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
                         outline.setRoundRect(0, 0, view.width, view.height, 24f)
                     }
                 }
@@ -238,11 +271,11 @@ class CameraActivity : ComponentActivity() {
                 val extraCount = totalPhotos - 3
                 val badge = TextView(this).apply {
                     text = "+$extraCount"
-                    setTextColor(android.graphics.Color.WHITE)
+                    setTextColor(Color.WHITE)
                     textSize = 14f
-                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    setTypeface(null, Typeface.BOLD)
                     gravity = Gravity.CENTER
-                    setBackgroundColor(android.graphics.Color.argb(180, 0, 0, 0))
+                    setBackgroundColor(Color.argb(180, 0, 0, 0))
                 }
                 thumbFrame.addView(badge, FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -259,10 +292,10 @@ class CameraActivity : ComponentActivity() {
         val root = window.decorView.rootView as ViewGroup
 
         val previewOverlay = FrameLayout(this).apply {
-            setBackgroundColor(android.graphics.Color.BLACK)
+            setBackgroundColor(Color.BLACK)
             alpha = 0f
-            scaleX = 0.95f
-            scaleY = 0.95f
+            scaleX = 0.85f
+            scaleY = 0.85f
         }
 
         val bitmap = getRotatedBitmap(photoBytes)
@@ -276,12 +309,14 @@ class CameraActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
-        // bottom action bar layout (resembling Google Photos footer)
-        val bottomBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(android.graphics.Color.argb(200, 0, 0, 0))
-            setPadding(0, 20, 0, 40)
+        // Google Photos style bottom action bar container
+        val bottomBar = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(200, 0, 0, 0))
+            setPadding(40, 24, 40, 48)
+            clipChildren = false
+            clipToPadding = false
+            // prevent clicks on bottom bar from dismissing the overlay
+            setOnClickListener { }
         }
         val bottomBarParams = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -290,25 +325,58 @@ class CameraActivity : ComponentActivity() {
             gravity = Gravity.BOTTOM
         }
 
-        // 1. Share button
-        val shareButton = TextView(this).apply {
-            text = "📤\nShare"
-            setTextColor(android.graphics.Color.WHITE)
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setPadding(60, 10, 60, 10)
-            setOnClickListener {
-                Toast.makeText(this@CameraActivity, "Share action triggered", Toast.LENGTH_SHORT).show()
-            }
+        // Adjust padding dynamically for navigation bar insets
+        ViewCompat.setOnApplyWindowInsetsListener(bottomBar) { view, insets ->
+            val navBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            val bottomPaddingPx = if (navBarHeight > 0) navBarHeight + 24 else 48
+            view.setPadding(40, 24, 40, bottomPaddingPx)
+            insets
         }
 
-        // 2. Delete button
-        val deleteButton = TextView(this).apply {
-            text = "🗑\nDelete"
-            setTextColor(android.graphics.Color.WHITE)
-            textSize = 14f
+        // 1. Share button (bottom left)
+        val shareButton = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(60, 10, 60, 10)
+            clipChildren = false
+            clipToPadding = false
+            setPadding(20, 10, 20, 10)
+            setOnClickListener {
+                sharePhoto(photoBytes)
+            }
+        }
+        val shareIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_share)
+        }
+        val shareText = TextView(this).apply {
+            text = "Share"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            gravity = Gravity.CENTER
+            isSingleLine = true
+            setPadding(0, 6, 0, 0)
+        }
+        shareButton.addView(shareIcon, LinearLayout.LayoutParams(64, 64))
+        shareButton.addView(shareText, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+
+        val shareParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            leftMargin = 40
+        }
+        bottomBar.addView(shareButton, shareParams)
+
+        // 2. Delete button (bottom right)
+        val deleteButton = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            clipChildren = false
+            clipToPadding = false
+            setPadding(20, 10, 20, 10)
             setOnClickListener {
                 AlertDialog.Builder(this@CameraActivity)
                     .setTitle("Delete Photo")
@@ -319,36 +387,43 @@ class CameraActivity : ComponentActivity() {
                             photoQueue.removeAt(photoIndex)
                             updateQueuePreview()
                         }
-                        previewOverlay.animate()
-                            .alpha(0f)
-                            .scaleX(0.95f)
-                            .scaleY(0.95f)
-                            .setDuration(200)
-                            .setInterpolator(DecelerateInterpolator())
-                            .withEndAction {
-                                root.removeView(previewOverlay)
-                            }.start()
+                        closePreviewOverlay(root, previewOverlay)
                     }
                     .setNegativeButton("Cancel", null)
                     .show()
             }
         }
+        val deleteIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_delete)
+        }
+        val deleteText = TextView(this).apply {
+            text = "Delete"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            gravity = Gravity.CENTER
+            isSingleLine = true
+            setPadding(0, 6, 0, 0)
+        }
+        deleteButton.addView(deleteIcon, LinearLayout.LayoutParams(64, 64))
+        deleteButton.addView(deleteText, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
 
-        bottomBar.addView(shareButton)
-        bottomBar.addView(deleteButton)
+        val deleteParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            rightMargin = 40
+        }
+        bottomBar.addView(deleteButton, deleteParams)
+
         previewOverlay.addView(bottomBar, bottomBarParams)
 
         // tap background (excluding bottom bar) to close preview smoothly
         previewOverlay.setOnClickListener {
-            previewOverlay.animate()
-                .alpha(0f)
-                .scaleX(0.95f)
-                .scaleY(0.95f)
-                .setDuration(200)
-                .setInterpolator(DecelerateInterpolator())
-                .withEndAction {
-                    root.removeView(previewOverlay)
-                }.start()
+            closePreviewOverlay(root, previewOverlay)
         }
 
         root.addView(previewOverlay, FrameLayout.LayoutParams(
@@ -356,13 +431,48 @@ class CameraActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
-        // smooth scale-up and fade-in animation
+        // hardware-accelerated smooth scale-up and fade-in animation
         previewOverlay.animate()
             .alpha(1f)
             .scaleX(1f)
             .scaleY(1f)
             .setDuration(250)
             .setInterpolator(DecelerateInterpolator())
+            .withLayer()
             .start()
+    }
+
+    private fun closePreviewOverlay(root: ViewGroup, previewOverlay: View) {
+        previewOverlay.animate()
+            .alpha(0f)
+            .scaleX(0.85f)
+            .scaleY(0.85f)
+            .setDuration(200)
+            .setInterpolator(DecelerateInterpolator())
+            .withLayer()
+            .withEndAction {
+                root.removeView(previewOverlay)
+            }
+            .start()
+    }
+
+    private fun sharePhoto(photoBytes: ByteArray) {
+        try {
+            val cacheFile = File(cacheDir, "shared_photo.jpg")
+            cacheFile.writeBytes(photoBytes)
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                cacheFile
+            )
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/jpeg"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, "Share Photo"))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Sharing photo...", Toast.LENGTH_SHORT).show()
+        }
     }
 }

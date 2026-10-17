@@ -7,7 +7,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-data class FolderItem(val name: String, val path: String, val photoCount: Int)
+data class FolderItem(
+    val name: String,
+    val path: String,
+    val photoCount: Int,
+    val isLocked: Boolean = false
+)
 
 sealed interface CreateResult {
     data class Success(val folder: File) : CreateResult
@@ -28,10 +33,12 @@ object FolderRepository {
             .orEmpty()
             .sortedBy { it.name.lowercase() }
             .map {
+                val dir = File(it.absolutePath)
                 FolderItem(
                     name = it.name,
                     path = it.absolutePath,
-                    photoCount = listPhotos(it).size
+                    photoCount = listPhotos(dir).size,
+                    isLocked = isLocked(dir)
                 )
             }
 
@@ -43,7 +50,7 @@ object FolderRepository {
 
     fun renameFolder(context: Context, oldName: String, rawNewName: String): CreateResult {
         val newName = sanitize(rawNewName)
-        if (newName.isBlank()) return CreateResult.Error("Invalid name, User letters, numbers, spaces, _ or -")
+        if (newName.isBlank()) return CreateResult.Error("Invalid name, use letters, numbers, spaces, _ or -")
 
         val oldDir = File(root(context), oldName)
         if (!oldDir.isDirectory) return CreateResult.Error("Folder no longer exists")
@@ -54,7 +61,7 @@ object FolderRepository {
 
         return if (oldDir.renameTo(newDir)) CreateResult.Success(newDir)
         else CreateResult.Error("Couldn't rename folder")
-        }
+    }
 
     fun createFolder(context: Context, rawName: String): CreateResult {
         val name = sanitize(rawName)
@@ -66,34 +73,59 @@ object FolderRepository {
         return if (target.mkdir()) CreateResult.Success(target)
         else CreateResult.Error("Couldn't create folder")
     }
+
     /**
-     * Strips anything except letters, digits, space, '-' and '_' so a name like "../../x"
-     * can never escape the folders/ directory.
+     * Strips anything except letters, digits, space, '-', '_' and ':'
      */
     fun sanitize(rawName: String): String {
-        val name = rawName.replace(Regex("[^\\w\\- :]"), "").trim()
-        return name
+        return rawName.replace(Regex("[^\\w\\- :]"), "").trim()
     }
 
     /**
      * Hook for the camera teammate: ask for a fresh file, write the JPEG bytes into it.
-     * Example: val file = FolderRepository.newPhotoFile(File(folderPath))
      */
     fun newPhotoFile(folder: File): File {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         return File(folder, "IMG_$stamp.jpg")
     }
 
-    data class FolderSettings(val retentionDays: Int = 0, val icon: String = "\uD83D\uDCC1")
+    data class FolderSettings(
+        val retentionDays: Int = 0,
+        val icon: String = "\uD83D\uDCC1",
+        val passcode: String? = null
+    )
+
     private const val SETTINGS_FILE = "folder_settings.json"
 
     fun loadSettings(folder: File): FolderSettings = try {
         val json = JSONObject(File(folder, SETTINGS_FILE).readText())
-        FolderSettings(json.optInt("retentionDays", 0), json.optString("icon", "📁"))
-    } catch (e: Exception) { FolderSettings() }  // missing or corrupt file -> defaults
+        FolderSettings(
+            retentionDays = json.optInt("retentionDays", 0),
+            icon = json.optString("icon", "📁"),
+            passcode = json.optString("passcode", "").takeIf { it.isNotEmpty() }
+        )
+    } catch (_: Exception) { FolderSettings() }
 
     fun saveSettings(folder: File, s: FolderSettings) {
-        val json = JSONObject().put("retentionDays", s.retentionDays).put("icon", s.icon)
+        val json = JSONObject()
+            .put("retentionDays", s.retentionDays)
+            .put("icon", s.icon)
+        if (!s.passcode.isNullOrEmpty()) {
+            json.put("passcode", s.passcode)
+        }
         File(folder, SETTINGS_FILE).writeText(json.toString())
+    }
+
+    fun isLocked(folder: File): Boolean =
+        !loadSettings(folder).passcode.isNullOrEmpty()
+
+    fun setPasscode(folder: File, passcode: String) {
+        val current = loadSettings(folder)
+        saveSettings(folder, current.copy(passcode = passcode))
+    }
+
+    fun verifyPasscode(folder: File, input: String): Boolean {
+        val code = loadSettings(folder).passcode
+        return code != null && code == input
     }
 }

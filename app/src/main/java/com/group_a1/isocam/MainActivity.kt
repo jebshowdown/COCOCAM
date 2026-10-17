@@ -1,6 +1,8 @@
 package com.group_a1.isocam
 
+import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,12 +22,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.tooling.preview.Preview
-import com.group_a1.isocam.ui.theme.IsocamTheme
-import android.content.Intent
 import com.group_a1.isocam.screens.CameraActivity
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -34,9 +36,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val initialTabStr = intent.getStringExtra("initial_tab")
+        val initialTab = if (initialTabStr == "Settings") HomeTab.Settings else HomeTab.Folders
+
         setContent {
             MaterialTheme {
-                IsoCamApp(refreshTick)
+                IsoCamApp(refreshTick, initialTab)
             }
         }
     }
@@ -55,8 +60,8 @@ private enum class HomeTab(val label: String, val icon: ImageVector) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun IsoCamApp(refreshTick: Int) {
-    var tab by rememberSaveable { mutableStateOf(HomeTab.Folders) }
+private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Folders) {
+    var tab by rememberSaveable { mutableStateOf(initialTab) }
     val context = LocalContext.current
 
     Scaffold(
@@ -81,7 +86,7 @@ fun IsoCamApp(refreshTick: Int) {
                 }
             }
         },
-    ){ padding ->
+    ) { padding ->
         val content = Modifier.padding(padding)
         when (tab) {
             HomeTab.Folders -> FoldersScreen(refreshTick, content)
@@ -96,6 +101,7 @@ private fun FoldersScreen(refreshTick: Int, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var folders by remember { mutableStateOf(emptyList<FolderItem>()) }
     var showDialog by remember { mutableStateOf(false) }
+    var folderToUnlock by remember { mutableStateOf<FolderItem?>(null) }
 
     fun reload() {
         folders = FolderRepository.listFolders(context)
@@ -112,7 +118,13 @@ private fun FoldersScreen(refreshTick: Int, modifier: Modifier = Modifier) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(folders, key = { it.path }) { folder ->
-                    FolderRow(folder) { FolderDetailActivity.start(context, folder.path) }
+                    FolderRow(folder) {
+                        if (folder.isLocked) {
+                            folderToUnlock = folder
+                        } else {
+                            FolderDetailActivity.start(context, folder.path)
+                        }
+                    }
                 }
             }
         }
@@ -141,20 +153,88 @@ private fun FoldersScreen(refreshTick: Int, modifier: Modifier = Modifier) {
                 },
             )
         }
+
+        folderToUnlock?.let { folder ->
+            UnlockFolderDialog(
+                folderName = folder.name,
+                onDismiss = { folderToUnlock = null },
+                onUnlock = { passcode ->
+                    if (FolderRepository.verifyPasscode(File(folder.path), passcode)) {
+                        folderToUnlock = null
+                        FolderDetailActivity.start(context, folder.path)
+                        true
+                    } else {
+                        Toast.makeText(context, "Incorrect passcode", Toast.LENGTH_SHORT).show()
+                        false
+                    }
+                }
+            )
+        }
     }
+}
+
+@Composable
+private fun UnlockFolderDialog(
+    folderName: String,
+    onDismiss: () -> Unit,
+    onUnlock: (String) -> Boolean
+) {
+    var passcode by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Locked Folder: $folderName") },
+        text = {
+            OutlinedTextField(
+                value = passcode,
+                onValueChange = { passcode = it },
+                label = { Text("Enter Passcode") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onUnlock(passcode) }) {
+                Text("Unlock")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
 private fun FolderRow(folder: FolderItem, onClick: () -> Unit) {
     ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(folder.name, style = MaterialTheme.typography.titleMedium)
-            val n = folder.photoCount
-            Text(
-                text = "$n photo${if (n == 1) "" else "s"}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(folder.name, style = MaterialTheme.typography.titleMedium)
+                    if (folder.isLocked) {
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Locked folder",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                val n = folder.photoCount
+                Text(
+                    text = "$n photo${if (n == 1) "" else "s"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

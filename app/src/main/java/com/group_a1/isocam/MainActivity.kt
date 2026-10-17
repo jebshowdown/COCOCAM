@@ -1,6 +1,5 @@
 package com.group_a1.isocam
 
-
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,6 +21,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.tooling.preview.Preview
+import com.group_a1.isocam.ui.theme.IsocamTheme
+import android.content.Intent
+import com.group_a1.isocam.screens.CameraActivity
 
 class MainActivity : ComponentActivity() {
 
@@ -54,6 +57,7 @@ private enum class HomeTab(val label: String, val icon: ImageVector) {
 @Composable
 fun IsoCamApp(refreshTick: Int) {
     var tab by rememberSaveable { mutableStateOf(HomeTab.Folders) }
+    val context = LocalContext.current
 
     Scaffold(
         topBar = { TopAppBar(title = { Text(tab.label) }) },
@@ -62,19 +66,26 @@ fun IsoCamApp(refreshTick: Int) {
                 HomeTab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = t == tab,
-                        onClick = { tab = t },
+                        onClick = {
+                            if (t == HomeTab.Camera) {
+                                // Launch CameraActivity directly when the bottom nav camera item is tapped
+                                val intent = Intent(context, CameraActivity::class.java)
+                                context.startActivity(intent)
+                            } else {
+                                tab = t
+                            }
+                        },
                         icon = { Icon(t.icon, contentDescription = t.label) },
                         label = { Text(t.label) },
                     )
                 }
             }
         },
-    ) { padding ->
+    ){ padding ->
         val content = Modifier.padding(padding)
         when (tab) {
             HomeTab.Folders -> FoldersScreen(refreshTick, content)
-            // TODO(teammate): replace with the real camera screen / launch the camera activity
-            HomeTab.Camera -> CenteredText("Camera screen goes here", content)
+            HomeTab.Camera -> CenteredText("Launching camera...", content)
             HomeTab.Settings -> CenteredText("Settings", content)
         }
     }

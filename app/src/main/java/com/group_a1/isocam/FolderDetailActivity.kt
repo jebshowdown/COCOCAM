@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.group_a1.isocam.screens.CameraActivity
 import java.io.File
 
 class FolderDetailActivity : ComponentActivity() {
@@ -55,14 +56,14 @@ class FolderDetailActivity : ComponentActivity() {
         refreshTick++
     }
     private fun openCamera(folder: File) {
-        // TODO(teammate): launch the real camera screen and pass the target folder, e.g.
-        // startActivity(Intent(this, CameraActivity::class.java)
-        //     .putExtra("folder_path", folder.absolutePath))
-        Toast.makeText(this, "Camera not wired up yet", Toast.LENGTH_SHORT).show()
+        val intent = Intent(this, CameraActivity::class.java).apply {
+            putExtra("folder_path", folder.absolutePath)
+        }
+        startActivity(intent)
     }
 
     private fun openFolderSettings(folder: File) {
-        var
+        //var
     }
 
     companion object {

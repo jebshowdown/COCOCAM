@@ -176,7 +176,7 @@ class CameraActivity : ComponentActivity() {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 40f
-                setColor(Color.parseColor("#1E88E5"))
+                setColor(Color.argb(255, 30, 136, 229))
             }
             setPadding(36, 20, 36, 20)
             setOnClickListener { sendPhotosToFolder() }
@@ -243,11 +243,11 @@ class CameraActivity : ComponentActivity() {
         }
 
         // Home context: generate automatic folder name using current date/time
-        val autoFolderName = SimpleDateFormat("yyyy-MM-dd HH.mm.ss", Locale.US).format(Date())
+        val autoFolderName = SimpleDateFormat("MM-dd-yyyy HH:mm", Locale.US).format(Date())
         return when (val result = FolderRepository.createFolder(this, autoFolderName)) {
             is CreateResult.Success -> result.folder
             is CreateResult.Error -> {
-                val fallbackName = SimpleDateFormat("yyyy-MM-dd HH.mm.ss_SSS", Locale.US).format(Date())
+                val fallbackName = SimpleDateFormat("MM-dd-yyyy HH:mm:ss", Locale.US).format(Date())
                 (FolderRepository.createFolder(this, fallbackName) as? CreateResult.Success)?.folder
             }
         }

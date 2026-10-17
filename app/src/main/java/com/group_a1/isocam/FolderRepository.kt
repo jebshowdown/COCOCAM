@@ -71,9 +71,9 @@ object FolderRepository {
      * can never escape the folders/ directory.
      */
     fun sanitize(rawName: String): String {
-        val name = rawName.replace(Regex("[^\\w\\- ]"), "").trim()
+        val name = rawName.replace(Regex("[^\\w\\- :]"), "").trim()
         return name
-        }
+    }
 
     /**
      * Hook for the camera teammate: ask for a fresh file, write the JPEG bytes into it.

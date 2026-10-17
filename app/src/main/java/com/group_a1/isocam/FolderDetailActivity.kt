@@ -62,8 +62,7 @@ class FolderDetailActivity : ComponentActivity() {
     }
 
     private fun openFolderSettings(folder: File) {
-        // TODO: replace with a settings dialog/screen (rename, delete, ...)
-        Toast.makeText(this, "Settings for ${folder.name}", Toast.LENGTH_SHORT).show()
+        var
     }
 
     companion object {

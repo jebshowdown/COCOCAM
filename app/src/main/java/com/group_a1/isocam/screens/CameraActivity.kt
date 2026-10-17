@@ -2,13 +2,16 @@ package com.group_a1.isocam.screens
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.os.Bundle
 import android.view.Gravity
-import android.view.MotionEvent
+import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -25,7 +28,6 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
-import kotlin.math.abs
 
 class CameraActivity : ComponentActivity() {
 
@@ -37,7 +39,6 @@ class CameraActivity : ComponentActivity() {
 
     // container views for UI elements
     private lateinit var previewContainer: LinearLayout
-    private lateinit var trashButton: Button
     private lateinit var rootLayout: FrameLayout
 
     // modern android way to handle runtime permissions safely
@@ -65,42 +66,23 @@ class CameraActivity : ComponentActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // 1. back arrow button (top left): pops back to previous activity without saving
+        // 1. sleek, thin '<' back button (shifted down to completely clear status bar)
         val backButton = Button(this).apply {
-            text = "←"
+            text = "‹"
             setTextColor(android.graphics.Color.WHITE)
-            textSize = 24f
+            textSize = 40f
+            setTypeface(null, android.graphics.Typeface.NORMAL)
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
             setOnClickListener { finish() }
         }
-        val backParams = FrameLayout.LayoutParams(120, 120).apply {
+        val backParams = FrameLayout.LayoutParams(140, 140).apply {
             gravity = Gravity.TOP or Gravity.START
-            topMargin = 140
-            leftMargin = 40
+            topMargin = 170
+            leftMargin = 30
         }
         rootLayout.addView(backButton, backParams)
 
-        // 2. circular transparent trash can target (bottom left) for drag-to-delete
-        val trashDrawable = android.graphics.drawable.GradientDrawable().apply {
-            shape = android.graphics.drawable.GradientDrawable.OVAL
-            setColor(android.graphics.Color.TRANSPARENT)
-            setStroke(8, android.graphics.Color.WHITE)
-            alpha = 180
-        }
-        trashButton = Button(this).apply {
-            text = "🗑️"
-            textSize = 22f
-            background = trashDrawable
-            alpha = 0.6f
-        }
-        val trashParams = FrameLayout.LayoutParams(140, 140).apply {
-            gravity = Gravity.BOTTOM or Gravity.START
-            bottomMargin = 100
-            leftMargin = 50
-        }
-        rootLayout.addView(trashButton, trashParams)
-
-        // 3. top-right queue thumbnail container (stays rigidly pinned to the right)
+        // 2. top-right queue thumbnail container (stays rigidly pinned to the right)
         previewContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             clipChildren = false
@@ -111,12 +93,12 @@ class CameraActivity : ComponentActivity() {
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            topMargin = 150
+            topMargin = 170
             rightMargin = 50
         }
         rootLayout.addView(previewContainer, previewParams)
 
-        // 4. snapchat-style circular ring drawable for capture button
+        // 3. snapchat-style circular ring drawable for capture button
         val ringDrawable = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.OVAL
             setColor(android.graphics.Color.TRANSPARENT)
@@ -207,8 +189,8 @@ class CameraActivity : ComponentActivity() {
         return Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
     }
 
-    // renders thumbnails with stable floating drag-to-trash and safe preview clicks
-    @SuppressLint("SetTextI18n", "ClickableViewAccessibility")
+    // renders clean thumbnails with tap-to-preview interaction
+    @SuppressLint("SetTextI18n")
     private fun updateQueuePreview() {
         previewContainer.removeAllViews()
 
@@ -229,89 +211,14 @@ class CameraActivity : ComponentActivity() {
 
                 clipToOutline = true
                 outlineProvider = object : android.view.ViewOutlineProvider() {
-                    override fun getOutline(view: android.view.View, outline: android.graphics.Outline) {
+                    override fun getOutline(view: View, outline: android.graphics.Outline) {
                         outline.setRoundRect(0, 0, view.width, view.height, 24f)
                     }
                 }
 
-                var startX = 0f
-                var startY = 0f
-                var floatingView: ImageView? = null
-
-                setOnTouchListener { v, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            startX = event.rawX
-                            startY = event.rawY
-                            true
-                        }
-                        MotionEvent.ACTION_MOVE -> {
-                            val deltaX = event.rawX - startX
-                            val deltaY = event.rawY - startY
-
-                            // create floating drag view on first significant move
-                            if (floatingView == null && (abs(deltaX) > 10 || abs(deltaY) > 10)) {
-                                v.alpha = 0f // hide original view so space is preserved as a placeholder
-
-                                val loc = IntArray(2)
-                                v.getLocationOnScreen(loc)
-
-                                val bitmap = getRotatedBitmap(photoQueue[targetIndex])
-                                floatingView = ImageView(context).apply {
-                                    setImageBitmap(bitmap)
-                                    scaleType = ImageView.ScaleType.CENTER_CROP
-                                    clipToOutline = true
-                                    outlineProvider = v.outlineProvider
-                                }
-
-                                val floatParams = FrameLayout.LayoutParams(v.width, v.height).apply {
-                                    leftMargin = loc[0]
-                                    topMargin = loc[1]
-                                }
-                                rootLayout.addView(floatingView, floatParams)
-                            }
-
-                            // update floating view position smoothly across the entire root layout
-                            floatingView?.let {
-                                it.translationX = event.rawX - startX
-                                it.translationY = event.rawY - startY
-                            }
-                            true
-                        }
-                        MotionEvent.ACTION_UP -> {
-                            if (floatingView != null) {
-                                // check if dropped over trash can bounds
-                                val trashLocation = IntArray(2)
-                                trashButton.getLocationOnScreen(trashLocation)
-                                val floatLocation = IntArray(2)
-                                floatingView!!.getLocationOnScreen(floatLocation)
-
-                                val floatCenterX = floatLocation[0] + floatingView!!.width / 2
-                                val floatCenterY = floatLocation[1] + floatingView!!.height / 2
-
-                                val isOverTrash = floatCenterX in trashLocation[0]..(trashLocation[0] + trashButton.width) &&
-                                        floatCenterY in trashLocation[1]..(trashLocation[1] + trashButton.height)
-
-                                rootLayout.removeView(floatingView)
-                                floatingView = null
-
-                                if (isOverTrash) {
-                                    // remove from memory array and update preview stack
-                                    photoQueue.removeAt(targetIndex)
-                                    updateQueuePreview()
-                                } else {
-                                    // snap back: restore original view visibility
-                                    v.alpha = 1f
-                                }
-                            } else {
-                                // quick tap detection: show fullscreen preview (badge slot does nothing)
-                                if (!isBadgeSlot) {
-                                    showFullscreenPreview(photoQueue[targetIndex])
-                                }
-                            }
-                            true
-                        }
-                        else -> false
+                setOnClickListener {
+                    if (!isBadgeSlot) {
+                        showFullscreenPreview(photoQueue[targetIndex])
                     }
                 }
             }
@@ -347,17 +254,15 @@ class CameraActivity : ComponentActivity() {
         }
     }
 
+    // full-screen preview with Google Photos style bottom action bar (Share & Delete)
     private fun showFullscreenPreview(photoBytes: ByteArray) {
         val root = window.decorView.rootView as ViewGroup
 
         val previewOverlay = FrameLayout(this).apply {
             setBackgroundColor(android.graphics.Color.BLACK)
             alpha = 0f
-            setOnClickListener {
-                animate().alpha(0f).setDuration(200).withEndAction {
-                    root.removeView(this)
-                }.start()
-            }
+            scaleX = 0.95f
+            scaleY = 0.95f
         }
 
         val bitmap = getRotatedBitmap(photoBytes)
@@ -371,11 +276,93 @@ class CameraActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
+        // bottom action bar layout (resembling Google Photos footer)
+        val bottomBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(android.graphics.Color.argb(200, 0, 0, 0))
+            setPadding(0, 20, 0, 40)
+        }
+        val bottomBarParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM
+        }
+
+        // 1. Share button
+        val shareButton = TextView(this).apply {
+            text = "📤\nShare"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(60, 10, 60, 10)
+            setOnClickListener {
+                Toast.makeText(this@CameraActivity, "Share action triggered", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // 2. Delete button
+        val deleteButton = TextView(this).apply {
+            text = "🗑\nDelete"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(60, 10, 60, 10)
+            setOnClickListener {
+                AlertDialog.Builder(this@CameraActivity)
+                    .setTitle("Delete Photo")
+                    .setMessage("Are you sure you want to remove this photo?")
+                    .setPositiveButton("Yes") { _, _ ->
+                        val photoIndex = photoQueue.indexOf(photoBytes)
+                        if (photoIndex != -1) {
+                            photoQueue.removeAt(photoIndex)
+                            updateQueuePreview()
+                        }
+                        previewOverlay.animate()
+                            .alpha(0f)
+                            .scaleX(0.95f)
+                            .scaleY(0.95f)
+                            .setDuration(200)
+                            .setInterpolator(DecelerateInterpolator())
+                            .withEndAction {
+                                root.removeView(previewOverlay)
+                            }.start()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
+
+        bottomBar.addView(shareButton)
+        bottomBar.addView(deleteButton)
+        previewOverlay.addView(bottomBar, bottomBarParams)
+
+        // tap background (excluding bottom bar) to close preview smoothly
+        previewOverlay.setOnClickListener {
+            previewOverlay.animate()
+                .alpha(0f)
+                .scaleX(0.95f)
+                .scaleY(0.95f)
+                .setDuration(200)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction {
+                    root.removeView(previewOverlay)
+                }.start()
+        }
+
         root.addView(previewOverlay, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
-        previewOverlay.animate().alpha(1f).setDuration(200).start()
+        // smooth scale-up and fade-in animation
+        previewOverlay.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(250)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
     }
 }

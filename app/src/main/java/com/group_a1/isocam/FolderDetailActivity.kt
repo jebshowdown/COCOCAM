@@ -3,6 +3,7 @@ package com.group_a1.isocam
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -12,6 +13,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,7 +39,13 @@ class FolderDetailActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                FolderDetailScreen(folder, refreshTick, onBack = { finish() })
+                FolderDetailScreen(
+                    folder = folder,
+                    refreshTick = refreshTick,
+                    onBack = { finish() },
+                    onCamera = {openCamera(folder)},
+                    onFolderSettings = {openFolderSettings(folder)},
+                )
             }
         }
     }
@@ -45,6 +53,17 @@ class FolderDetailActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshTick++
+    }
+    private fun openCamera(folder: File) {
+        // TODO(teammate): launch the real camera screen and pass the target folder, e.g.
+        // startActivity(Intent(this, CameraActivity::class.java)
+        //     .putExtra("folder_path", folder.absolutePath))
+        Toast.makeText(this, "Camera not wired up yet", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openFolderSettings(folder: File) {
+        // TODO: replace with a settings dialog/screen (rename, delete, ...)
+        Toast.makeText(this, "Settings for ${folder.name}", Toast.LENGTH_SHORT).show()
     }
 
     companion object {
@@ -61,8 +80,15 @@ class FolderDetailActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FolderDetailScreen(folder: File, refreshTick: Int, onBack: () -> Unit) {
+private fun FolderDetailScreen(
+    folder: File,
+    refreshTick: Int,
+    onBack: () -> Unit,
+    onCamera: () ->Unit,
+    onFolderSettings: () -> Unit,
+) {
     var photos by remember { mutableStateOf(emptyList<File>()) }
+    var menuOpen by remember {mutableStateOf(false)}
     LaunchedEffect(refreshTick) { photos = FolderRepository.listPhotos(folder) }
 
     Scaffold(
@@ -76,6 +102,33 @@ private fun FolderDetailScreen(folder: File, refreshTick: Int, onBack: () -> Uni
                 },
             )
         },
+        floatingActionButton = {
+            Box {
+                FloatingActionButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Folder actions")
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ){
+                    DropdownMenuItem(
+                        text = { Text("Camera")} ,
+                        onClick = {
+                            menuOpen = false
+                            onCamera()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Settings")},
+                        onClick = {
+                            menuOpen = false
+                            onFolderSettings()
+                        }
+                    )
+                }
+            }
+        }
+
     ) { padding ->
         if (photos.isEmpty()) {
             Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {

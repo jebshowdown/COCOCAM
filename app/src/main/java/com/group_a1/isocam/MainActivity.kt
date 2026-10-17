@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.group_a1.isocam.ui.theme.IsocamTheme
+import android.content.Intent
+import com.group_a1.isocam.screens.CameraActivity
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -20,10 +22,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             IsocamTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                    // We wrap things in a container or place the button directly here
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding),
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        androidx.compose.material3.Button(onClick = {
+                            val intent = android.content.Intent(this@MainActivity, com.group_a1.isocam.screens.CameraActivity::class.java)
+                            startActivity(intent)
+                        }) {
+                            Text("Open Camera")
+                        }
+                    }
                 }
             }
         }

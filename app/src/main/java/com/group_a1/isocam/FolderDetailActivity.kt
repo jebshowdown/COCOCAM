@@ -3,8 +3,8 @@ package com.group_a1.isocam
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
@@ -38,14 +38,19 @@ class FolderDetailActivity : ComponentActivity() {
             return
         }
 
+        // Pressing system back button inside any folder always routes back home to MainActivity
+        onBackPressedDispatcher.addCallback(this) {
+            navigateHome()
+        }
+
         setContent {
             MaterialTheme {
                 FolderDetailScreen(
                     folder = folder,
                     refreshTick = refreshTick,
-                    onBack = { finish() },
-                    onCamera = {openCamera(folder)},
-                    onFolderSettings = {openFolderSettings(folder)},
+                    onBack = { navigateHome() },
+                    onCamera = { openCamera(folder) },
+                    onFolderSettings = { openFolderSettings(folder) },
                 )
             }
         }
@@ -55,6 +60,15 @@ class FolderDetailActivity : ComponentActivity() {
         super.onResume()
         refreshTick++
     }
+
+    private fun navigateHome() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        startActivity(intent)
+        finish()
+    }
+
     private fun openCamera(folder: File) {
         val intent = Intent(this, CameraActivity::class.java).apply {
             putExtra("folder_path", folder.absolutePath)
@@ -63,7 +77,7 @@ class FolderDetailActivity : ComponentActivity() {
     }
 
     private fun openFolderSettings(folder: File) {
-        //var
+        // Folder settings implementation
     }
 
     companion object {
@@ -84,11 +98,11 @@ private fun FolderDetailScreen(
     folder: File,
     refreshTick: Int,
     onBack: () -> Unit,
-    onCamera: () ->Unit,
+    onCamera: () -> Unit,
     onFolderSettings: () -> Unit,
 ) {
     var photos by remember { mutableStateOf(emptyList<File>()) }
-    var menuOpen by remember {mutableStateOf(false)}
+    var menuOpen by remember { mutableStateOf(false) }
     LaunchedEffect(refreshTick) { photos = FolderRepository.listPhotos(folder) }
 
     Scaffold(
@@ -110,25 +124,24 @@ private fun FolderDetailScreen(
                 DropdownMenu(
                     expanded = menuOpen,
                     onDismissRequest = { menuOpen = false },
-                ){
+                ) {
                     DropdownMenuItem(
-                        text = { Text("Camera")} ,
+                        text = { Text("Camera") },
                         onClick = {
                             menuOpen = false
                             onCamera()
-                        }
+                        },
                     )
                     DropdownMenuItem(
-                        text = { Text("Settings")},
+                        text = { Text("Settings") },
                         onClick = {
                             menuOpen = false
                             onFolderSettings()
-                        }
+                        },
                     )
                 }
             }
-        }
-
+        },
     ) { padding ->
         if (photos.isEmpty()) {
             Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {

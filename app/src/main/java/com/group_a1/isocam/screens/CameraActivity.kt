@@ -25,6 +25,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -37,21 +38,28 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.group_a1.isocam.CreateResult
+import com.group_a1.isocam.FolderDetailActivity
+import com.group_a1.isocam.FolderRepository
 import com.group_a1.isocam.R
 import java.io.File
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class CameraActivity : ComponentActivity() {
 
     private lateinit var viewFinder: PreviewView
     private var imageCapture: ImageCapture? = null
 
-    // the in-memory queue: holds raw image byte arrays safely in RAM
+    // the in-memory queue: holds raw image byte arrays strictly in RAM until explicitly sent
     private val photoQueue = mutableListOf<ByteArray>()
 
     // container views for UI elements
     private lateinit var previewContainer: LinearLayout
     private lateinit var rootLayout: FrameLayout
+    private lateinit var sendButton: TextView
 
     // modern android way to handle runtime permissions safely
     private val requestPermissionLauncher = registerForActivityResult(
@@ -85,7 +93,11 @@ class CameraActivity : ComponentActivity() {
             textSize = 36f
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setOnClickListener { finish() }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(120, 0, 0, 0))
+            }
+            setOnClickListener { discardAndExit() }
         }
         val backParams = FrameLayout.LayoutParams(110, 110).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -94,7 +106,12 @@ class CameraActivity : ComponentActivity() {
         }
         rootLayout.addView(backButton, backParams)
 
-        // 2. top-right queue thumbnail container (stays rigidly pinned to the right)
+        // System back button/gesture discards RAM queue immediately and exits
+        onBackPressedDispatcher.addCallback(this) {
+            discardAndExit()
+        }
+
+        // 2. top-right queue thumbnail container
         previewContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             clipChildren = false
@@ -148,12 +165,91 @@ class CameraActivity : ComponentActivity() {
         }
         rootLayout.addView(captureButton, buttonParams)
 
+        // 4. Send button (bottom right): saves RAM queue to target folder and navigates to folder
+        sendButton = TextView(this).apply {
+            text = "Send"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 40f
+                setColor(Color.parseColor("#1E88E5"))
+            }
+            setPadding(36, 20, 36, 20)
+            setOnClickListener { sendPhotosToFolder() }
+        }
+
+        val sendParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            bottomMargin = 110
+            rightMargin = 60
+        }
+        rootLayout.addView(sendButton, sendParams)
+
         setContentView(rootLayout)
 
         if (allPermissionsGranted()) {
             startCamera()
         } else {
             requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun discardAndExit() {
+        photoQueue.clear()
+        finish()
+    }
+
+    private fun sendPhotosToFolder() {
+        if (photoQueue.isEmpty()) return
+
+        val targetFolder = getOrCreateTargetFolder() ?: run {
+            Toast.makeText(this, "Failed to determine target folder", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Write all queued RAM photos into target folder on disk
+        photoQueue.forEach { photoBytes ->
+            try {
+                val photoFile = FolderRepository.newPhotoFile(targetFolder)
+                val bitmap = getRotatedBitmap(photoBytes)
+                FileOutputStream(photoFile).use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        photoQueue.clear()
+
+        // Navigate directly into target folder view
+        FolderDetailActivity.start(this, targetFolder.absolutePath)
+        finish()
+    }
+
+    private fun getOrCreateTargetFolder(): File? {
+        val existingFolderPath = intent.getStringExtra("folder_path")
+        if (!existingFolderPath.isNullOrEmpty()) {
+            val folder = File(existingFolderPath)
+            if (folder.exists() && folder.isDirectory) {
+                return folder
+            }
+        }
+
+        // Home context: generate automatic folder name using current date/time
+        val autoFolderName = SimpleDateFormat("yyyy-MM-dd HH.mm.ss", Locale.US).format(Date())
+        return when (val result = FolderRepository.createFolder(this, autoFolderName)) {
+            is CreateResult.Success -> result.folder
+            is CreateResult.Error -> {
+                val fallbackName = SimpleDateFormat("yyyy-MM-dd HH.mm.ss_SSS", Locale.US).format(Date())
+                (FolderRepository.createFolder(this, fallbackName) as? CreateResult.Success)?.folder
+            }
         }
     }
 
@@ -201,22 +297,8 @@ class CameraActivity : ComponentActivity() {
                     val bytes = ByteArray(buffer.remaining())
                     buffer.get(bytes)
 
+                    // Strictly RAM-first: append bytes to in-memory queue only
                     photoQueue.add(bytes)
-
-                    val targetFolderPath = intent.getStringExtra("folder_path")
-                    if (targetFolderPath != null) {
-                        try {
-                            val folder = File(targetFolderPath)
-                            if (folder.exists()) {
-                                val photoFile = File(folder, "IMG_${System.currentTimeMillis()}.jpg")
-                                val bitmap = getRotatedBitmap(bytes)
-                                FileOutputStream(photoFile).use { out ->
-                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                                }
-                            }
-                        } catch (_: Exception) {
-                        }
-                    }
 
                     runOnUiThread {
                         updateQueuePreview()
@@ -240,7 +322,13 @@ class CameraActivity : ComponentActivity() {
         previewContainer.removeAllViews()
 
         val totalPhotos = photoQueue.size
-        if (totalPhotos == 0) return
+        if (totalPhotos == 0) {
+            sendButton.visibility = View.GONE
+            return
+        }
+
+        sendButton.visibility = View.VISIBLE
+        sendButton.text = "Send ($totalPhotos)"
 
         val displayCount = minOf(totalPhotos, 3)
 

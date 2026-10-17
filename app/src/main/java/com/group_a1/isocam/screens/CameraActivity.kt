@@ -84,10 +84,6 @@ class CameraActivity : ComponentActivity() {
             textSize = 36f
             gravity = Gravity.CENTER
             includeFontPadding = false
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.argb(120, 0, 0, 0))
-            }
             setOnClickListener { finish() }
         }
         val backParams = FrameLayout.LayoutParams(110, 110).apply {
@@ -348,7 +344,7 @@ class CameraActivity : ComponentActivity() {
             setImageResource(R.drawable.ic_share)
         }
         val shareText = TextView(this).apply {
-            text = "Share"
+            text = getString(R.string.btn_share)
             setTextColor(Color.WHITE)
             textSize = 13f
             gravity = Gravity.CENTER
@@ -366,7 +362,7 @@ class CameraActivity : ComponentActivity() {
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            leftMargin = 40
+            leftMargin = 80
         }
         bottomBar.addView(shareButton, shareParams)
 
@@ -397,7 +393,7 @@ class CameraActivity : ComponentActivity() {
             setImageResource(R.drawable.ic_delete)
         }
         val deleteText = TextView(this).apply {
-            text = "Delete"
+            text = getString(R.string.btn_delete)
             setTextColor(Color.WHITE)
             textSize = 13f
             gravity = Gravity.CENTER
@@ -415,7 +411,7 @@ class CameraActivity : ComponentActivity() {
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            rightMargin = 40
+            rightMargin = 80
         }
         bottomBar.addView(deleteButton, deleteParams)
 

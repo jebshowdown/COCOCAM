@@ -13,7 +13,10 @@ import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -23,10 +26,10 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -39,6 +42,7 @@ import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.group_a1.isocam.CreateResult
+import com.group_a1.isocam.FeedbackHelper
 import com.group_a1.isocam.FolderDetailActivity
 import com.group_a1.isocam.FolderRepository
 import com.group_a1.isocam.R
@@ -52,6 +56,7 @@ class CameraActivity : ComponentActivity() {
 
     private lateinit var viewFinder: PreviewView
     private var imageCapture: ImageCapture? = null
+    private var camera: Camera? = null
 
     // the in-memory queue: holds raw image byte arrays strictly in RAM until explicitly sent
     private val photoQueue = mutableListOf<ByteArray>()
@@ -60,6 +65,10 @@ class CameraActivity : ComponentActivity() {
     private lateinit var previewContainer: LinearLayout
     private lateinit var rootLayout: FrameLayout
     private lateinit var sendButton: TextView
+    private lateinit var zoomTextView: TextView
+    
+    private var isFrontCamera = false
+    private var flashMode = ImageCapture.FLASH_MODE_OFF
 
     // modern android way to handle runtime permissions safely
     private val requestPermissionLauncher = registerForActivityResult(
@@ -68,12 +77,12 @@ class CameraActivity : ComponentActivity() {
         if (isGranted) {
             startCamera()
         } else {
-            Toast.makeText(this, "Camera permission is required.", Toast.LENGTH_SHORT).show()
+            FeedbackHelper.show(this, "Camera permission is required.")
             finish()
         }
     }
 
-    @SuppressLint("SetTextI18n")
+    @SuppressLint("SetTextI18n", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -85,6 +94,29 @@ class CameraActivity : ComponentActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
+
+        val scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val currentZoomRatio = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f
+                val delta = detector.scaleFactor
+                camera?.cameraControl?.setZoomRatio(currentZoomRatio * delta)
+                return true
+            }
+        })
+
+        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                isFrontCamera = !isFrontCamera
+                startCamera()
+                return true
+            }
+        })
+
+        viewFinder.setOnTouchListener { _, event ->
+            scaleGestureDetector.onTouchEvent(event)
+            gestureDetector.onTouchEvent(event)
+            true
+        }
 
         // 1. sleek back button with circular background for high contrast
         val backButton = TextView(this).apply {
@@ -127,20 +159,98 @@ class CameraActivity : ComponentActivity() {
         }
         rootLayout.addView(previewContainer, previewParams)
 
+        // Flash Button
+        val flashButton = TextView(this).apply {
+            text = "⚡ Off"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(30, 20, 30, 20)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 40f
+                setColor(Color.argb(120, 0, 0, 0))
+            }
+            setOnClickListener {
+                flashMode = when (flashMode) {
+                    ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_AUTO
+                    ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON
+                    else -> ImageCapture.FLASH_MODE_OFF
+                }
+                text = when (flashMode) {
+                    ImageCapture.FLASH_MODE_OFF -> "⚡ Off"
+                    ImageCapture.FLASH_MODE_AUTO -> "⚡ Auto"
+                    else -> "⚡ On"
+                }
+                imageCapture?.flashMode = flashMode
+            }
+        }
+        val flashParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = 135
+        }
+        rootLayout.addView(flashButton, flashParams)
+
+        // Camera Flip Button
+        val flipButton = TextView(this).apply {
+            text = "🔄"
+            setTextColor(Color.WHITE)
+            textSize = 24f
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(120, 0, 0, 0))
+            }
+            setOnClickListener {
+                isFrontCamera = !isFrontCamera
+                startCamera()
+            }
+        }
+        val flipParams = FrameLayout.LayoutParams(110, 110).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            bottomMargin = 140
+            leftMargin = 80
+        }
+        rootLayout.addView(flipButton, flipParams)
+
+        // Zoom text view
+        zoomTextView = TextView(this).apply {
+            text = "1.0x"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(20, 10, 20, 10)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 20f
+                setColor(Color.argb(120, 0, 0, 0))
+            }
+        }
+        val zoomParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            bottomMargin = 350
+        }
+        rootLayout.addView(zoomTextView, zoomParams)
+
         // Dynamic Window Insets listener to position header controls safely below status bar/cutout on any device
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { _, insets ->
             val statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
             val topMarginPx = if (statusBarHeight > 0) statusBarHeight + 24 else 120
 
-            (backButton.layoutParams as FrameLayout.LayoutParams).apply {
-                topMargin = topMarginPx
-            }
+            (backButton.layoutParams as FrameLayout.LayoutParams).apply { topMargin = topMarginPx }
             backButton.requestLayout()
 
-            (previewContainer.layoutParams as FrameLayout.LayoutParams).apply {
-                topMargin = topMarginPx
-            }
+            (previewContainer.layoutParams as FrameLayout.LayoutParams).apply { topMargin = topMarginPx }
             previewContainer.requestLayout()
+            
+            (flashButton.layoutParams as FrameLayout.LayoutParams).apply { topMargin = topMarginPx + 15 }
+            flashButton.requestLayout()
 
             insets
         }
@@ -156,7 +266,26 @@ class CameraActivity : ComponentActivity() {
         val captureButton = Button(this).apply {
             text = ""
             background = ringDrawable
-            setOnClickListener { takePhoto() }
+            setOnClickListener { 
+                if (isFrontCamera && flashMode == ImageCapture.FLASH_MODE_ON) {
+                    val overlay = View(this@CameraActivity).apply {
+                        setBackgroundColor(Color.WHITE)
+                        alpha = 0f
+                    }
+                    rootLayout.addView(overlay, FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT, 
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    ))
+                    overlay.animate().alpha(1f).setDuration(200).withEndAction {
+                        takePhoto()
+                        overlay.animate().alpha(0f).setDuration(200).withEndAction {
+                            rootLayout.removeView(overlay)
+                        }.start()
+                    }.start()
+                } else {
+                    takePhoto() 
+                }
+            }
         }
 
         val buttonParams = FrameLayout.LayoutParams(200, 200).apply {
@@ -210,7 +339,7 @@ class CameraActivity : ComponentActivity() {
         if (photoQueue.isEmpty()) return
 
         val targetFolder = getOrCreateTargetFolder() ?: run {
-            Toast.makeText(this, "Failed to determine target folder", Toast.LENGTH_SHORT).show()
+            FeedbackHelper.show(this, "Failed to determine target folder")
             return
         }
 
@@ -267,16 +396,28 @@ class CameraActivity : ComponentActivity() {
                 it.surfaceProvider = viewFinder.surfaceProvider
             }
 
-            imageCapture = ImageCapture.Builder().build()
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            imageCapture = ImageCapture.Builder()
+                .setFlashMode(flashMode)
+                .build()
+                
+            val cameraSelector = if (isFrontCamera) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            }
 
             try {
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
+                camera = cameraProvider.bindToLifecycle(
                     this, cameraSelector, preview, imageCapture
                 )
+                
+                camera?.cameraInfo?.zoomState?.observe(this) { state ->
+                    val ratio = state.zoomRatio
+                    zoomTextView.text = String.format(Locale.US, "%.1fx", ratio)
+                }
             } catch (exc: Exception) {
-                Toast.makeText(this, "Camera binding failed: ${exc.message}", Toast.LENGTH_SHORT).show()
+                FeedbackHelper.show(this, "Camera binding failed: ${exc.message}")
             }
 
         }, ContextCompat.getMainExecutor(this))
@@ -289,7 +430,7 @@ class CameraActivity : ComponentActivity() {
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onError(exc: ImageCaptureException) {
-                    Toast.makeText(baseContext, "Photo capture failed: ${exc.message}", Toast.LENGTH_SHORT).show()
+                    FeedbackHelper.show(baseContext as ComponentActivity, "Photo capture failed: ${exc.message}")
                 }
 
                 override fun onCaptureSuccess(image: ImageProxy) {
@@ -312,7 +453,14 @@ class CameraActivity : ComponentActivity() {
 
     private fun getRotatedBitmap(photoBytes: ByteArray): Bitmap {
         val rawBitmap = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size)
-        val matrix = Matrix().apply { postRotate(90f) }
+        // Adjust rotation based on front/back camera
+        val rotation = if (isFrontCamera) -90f else 90f
+        val matrix = Matrix().apply { 
+            postRotate(rotation)
+            if (isFrontCamera) {
+                postScale(-1f, 1f) // Mirror for front camera
+            }
+        }
         return Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
     }
 
@@ -387,7 +535,7 @@ class CameraActivity : ComponentActivity() {
         }
     }
 
-    // full-screen preview with Google Photos style bottom action bar (Share & Delete)
+    // full-screen preview with Google Photos style bottom action bar (Share, Move & Delete)
     private fun showFullscreenPreview(photoBytes: ByteArray) {
         val root = window.decorView.rootView as ViewGroup
 
@@ -410,11 +558,13 @@ class CameraActivity : ComponentActivity() {
         ))
 
         // Google Photos style bottom action bar container
-        val bottomBar = FrameLayout(this).apply {
+        val bottomBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.argb(200, 0, 0, 0))
             setPadding(40, 24, 40, 48)
             clipChildren = false
             clipToPadding = false
+            gravity = Gravity.CENTER
             // prevent clicks on bottom bar from dismissing the overlay
             setOnClickListener { }
         }
@@ -433,91 +583,77 @@ class CameraActivity : ComponentActivity() {
             insets
         }
 
-        // 1. Share button (bottom left)
-        val shareButton = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            clipChildren = false
-            clipToPadding = false
-            setPadding(20, 10, 20, 10)
-            setOnClickListener {
-                sharePhoto(photoBytes)
-            }
-        }
-        val shareIcon = ImageView(this).apply {
-            setImageResource(R.drawable.ic_share)
-        }
-        val shareText = TextView(this).apply {
-            text = getString(R.string.btn_share)
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            isSingleLine = true
-            setPadding(0, 6, 0, 0)
-        }
-        shareButton.addView(shareIcon, LinearLayout.LayoutParams(64, 64))
-        shareButton.addView(shareText, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-
-        val shareParams = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            leftMargin = 80
-        }
-        bottomBar.addView(shareButton, shareParams)
-
-        // 2. Delete button (bottom right)
-        val deleteButton = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            clipChildren = false
-            clipToPadding = false
-            setPadding(20, 10, 20, 10)
-            setOnClickListener {
-                AlertDialog.Builder(this@CameraActivity)
-                    .setTitle("Delete Photo")
-                    .setMessage("Are you sure you want to remove this photo?")
-                    .setPositiveButton("Yes") { _, _ ->
-                        val photoIndex = photoQueue.indexOf(photoBytes)
-                        if (photoIndex != -1) {
-                            photoQueue.removeAt(photoIndex)
-                            updateQueuePreview()
+        val createActionBtn = { iconRes: Int, textStr: String, action: () -> Unit ->
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                clipChildren = false
+                clipToPadding = false
+                setPadding(20, 10, 20, 10)
+                setOnClickListener { action() }
+                
+                val icon = ImageView(this@CameraActivity).apply {
+                    if (iconRes != 0) {
+                        setImageResource(iconRes)
+                    } else {
+                        // fallback for missing icon
+                        val txt = TextView(context).apply {
+                            text = "📁"
+                            textSize = 24f
                         }
-                        closePreviewOverlay(root, previewOverlay)
+                        addView(txt, LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        ))
                     }
-                    .setNegativeButton("Cancel", null)
-                    .show()
+                }
+                if (iconRes != 0) addView(icon, LinearLayout.LayoutParams(64, 64))
+                
+                val textView = TextView(this@CameraActivity).apply {
+                    text = textStr
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    isSingleLine = true
+                    setPadding(0, 6, 0, 0)
+                }
+                addView(textView, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ))
             }
         }
-        val deleteIcon = ImageView(this).apply {
-            setImageResource(R.drawable.ic_delete)
-        }
-        val deleteText = TextView(this).apply {
-            text = getString(R.string.btn_delete)
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            isSingleLine = true
-            setPadding(0, 6, 0, 0)
-        }
-        deleteButton.addView(deleteIcon, LinearLayout.LayoutParams(64, 64))
-        deleteButton.addView(deleteText, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
 
-        val deleteParams = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            rightMargin = 80
+        // 1. Share button
+        val shareButton = createActionBtn(R.drawable.ic_share, getString(R.string.btn_share)) {
+            sharePhoto(photoBytes)
         }
-        bottomBar.addView(deleteButton, deleteParams)
+        
+        // 2. Move button
+        val moveButton = createActionBtn(0, "Move") {
+            FeedbackHelper.show(this, "Photo is still in RAM. Send to save first.")
+        }
+        
+        // 3. Delete button
+        val deleteButton = createActionBtn(R.drawable.ic_delete, getString(R.string.btn_delete)) {
+            AlertDialog.Builder(this@CameraActivity)
+                .setTitle("Delete Photo")
+                .setMessage("Are you sure you want to remove this photo?")
+                .setPositiveButton("Delete") { _, _ ->
+                    val photoIndex = photoQueue.indexOf(photoBytes)
+                    if (photoIndex != -1) {
+                        photoQueue.removeAt(photoIndex)
+                        updateQueuePreview()
+                    }
+                    closePreviewOverlay(root, previewOverlay)
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+        
+        bottomBar.addView(shareButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bottomBar.addView(moveButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bottomBar.addView(deleteButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         previewOverlay.addView(bottomBar, bottomBarParams)
 
@@ -572,7 +708,7 @@ class CameraActivity : ComponentActivity() {
             }
             startActivity(Intent.createChooser(shareIntent, "Share Photo"))
         } catch (_: Exception) {
-            Toast.makeText(this, "Sharing photo...", Toast.LENGTH_SHORT).show()
+            FeedbackHelper.show(this, "Sharing photo...")
         }
     }
 }

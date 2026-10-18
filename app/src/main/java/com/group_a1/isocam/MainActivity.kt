@@ -2,6 +2,7 @@ package com.group_a1.isocam
 
 import android.content.Context
 import android.content.Intent
+import android.app.Activity
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -191,12 +192,19 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
     var folders by remember { mutableStateOf(emptyList<FolderItem>()) }
     var showDialog by remember { mutableStateOf(false) }
     var folderToUnlock by remember { mutableStateOf<FolderItem?>(null) }
+    var sortOption by remember { mutableStateOf(SortOption.NameAsc) }
 
     fun reload() {
-        folders = FolderRepository.listFolders(context)
+        val list = FolderRepository.listFolders(context)
+        folders = when (sortOption) {
+            SortOption.NameAsc -> list.sortedBy { it.name.lowercase() }
+            SortOption.NameDesc -> list.sortedByDescending { it.name.lowercase() }
+            SortOption.DateDesc -> list.sortedByDescending { it.lastModified }
+            SortOption.DateAsc -> list.sortedBy { it.lastModified }
+        }
     }
 
-    LaunchedEffect(refreshTick) { reload() }
+    LaunchedEffect(refreshTick, sortOption) { reload() }
 
     val prefs = remember { context.getSharedPreferences("isocam_prefs", Context.MODE_PRIVATE) }
     val lastOpenedPath = prefs.getString("last_opened_folder_path", null)
@@ -243,7 +251,11 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    ScreenHeader(title = "Folders")
+                    ScreenHeader(
+                        title = "Folders",
+                        sortOption = sortOption,
+                        onSortChanged = { sortOption = it }
+                    )
                 }
 
                 // Hero Card
@@ -365,7 +377,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                         FolderDetailActivity.start(context, folder.path)
                         true
                     } else {
-                        Toast.makeText(context, "Incorrect passcode", Toast.LENGTH_SHORT).show()
+                        FeedbackHelper.show(context as Activity, "Incorrect passcode")
                         false
                     }
                 }
@@ -563,6 +575,25 @@ private fun FolderRow(folder: FolderItem, onClick: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (folder.expirationDate != null) {
+                    val timeLeft = folder.expirationDate - System.currentTimeMillis()
+                    if (timeLeft > 0) {
+                        val hours = timeLeft / (1000 * 60 * 60)
+                        val days = hours / 24
+                        val displayTime = if (days > 0) "$days days left" else "$hours hours left"
+                        Text(
+                            text = "Deletes in $displayTime",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    } else {
+                        Text(
+                            text = "Expired",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             }
             Icon(
                 imageVector = Icons.Default.ChevronRight,
@@ -573,28 +604,68 @@ private fun FolderRow(folder: FolderItem, onClick: () -> Unit) {
     }
 }
 
+enum class SortOption(val label: String) {
+    NameAsc("Name (A-Z)"), 
+    NameDesc("Name (Z-A)"), 
+    DateDesc("Recently Edited Date"), 
+    DateAsc("Recently Edited Date (Reverse)")
+}
+
 @Composable
-private fun ScreenHeader(title: String) {
+private fun ScreenHeader(title: String, sortOption: SortOption? = null, onSortChanged: ((SortOption) -> Unit)? = null) {
     val rainbow = LocalIsoCamExtras.current.rainbow
-    Column(
+    var sortMenuExpanded by remember { mutableStateOf(false) }
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
+            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineLarge,
-            color = MaterialTheme.colorScheme.onBackground
-        )
-        if (rainbow.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.5f)
-                    .height(4.dp)
-                    .clip(CircleShape)
-                    .background(Brush.horizontalGradient(rainbow))
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onBackground
             )
+            if (rainbow.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.5f)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Brush.horizontalGradient(rainbow))
+                )
+            }
+        }
+        
+        if (sortOption != null && onSortChanged != null) {
+            Box {
+                IconButton(onClick = { sortMenuExpanded = true }) {
+                    Text("↕️", style = MaterialTheme.typography.titleLarge)
+                }
+                DropdownMenu(
+                    expanded = sortMenuExpanded,
+                    onDismissRequest = { sortMenuExpanded = false },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    SortOption.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option.label) },
+                            onClick = {
+                                onSortChanged(option)
+                                sortMenuExpanded = false
+                            },
+                            trailingIcon = if (option == sortOption) {
+                                { Icon(Icons.Default.Check, contentDescription = null) }
+                            } else null
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -808,7 +879,7 @@ private fun UnlockFolderDialog(
         onDismissRequest = onDismiss,
         shape = MaterialTheme.shapes.extraLarge,
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        title = { Text("Locked Folder: $folderName") },
+        title = { Text("Enter passcode for: $folderName") },
         text = {
             OutlinedTextField(
                 value = passcode,

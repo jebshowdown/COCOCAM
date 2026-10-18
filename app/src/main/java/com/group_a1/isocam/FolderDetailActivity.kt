@@ -1,10 +1,12 @@
 package com.group_a1.isocam
 
+import android.app.Activity
+import android.app.DatePickerDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.widget.Toast
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
@@ -47,6 +49,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Settings
@@ -77,16 +80,21 @@ import com.group_a1.isocam.ui.theme.ThemeController
 import com.group_a1.isocam.ui.theme.ThemeMode
 import java.io.File
 import java.io.FileOutputStream
+import java.util.Calendar
 
 class FolderDetailActivity : ComponentActivity() {
 
     private var refreshTick by mutableIntStateOf(0)
     private var currentFolderFile: File? = null
+    
+    // Using a callback to handle URI cleanup after import
+    private var pendingImportUris: List<Uri>? = null
 
     private val pickMultiplePhotosLauncher = registerForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
         if (uris.isNotEmpty()) {
+            pendingImportUris = uris
             importPhotosFromUris(uris)
         }
     }
@@ -114,6 +122,55 @@ class FolderDetailActivity : ComponentActivity() {
 
         setContent {
             IsoCamTheme {
+                var showCleanupDialog by remember { mutableStateOf(false) }
+
+                LaunchedEffect(pendingImportUris) {
+                    if (pendingImportUris != null) {
+                        showCleanupDialog = true
+                    }
+                }
+
+                if (showCleanupDialog) {
+                    AlertDialog(
+                        onDismissRequest = { 
+                            showCleanupDialog = false
+                            pendingImportUris = null
+                        },
+                        title = { Text("Delete Original Photos?") },
+                        text = { Text("The photos have been imported. Do you want to delete the originals from your gallery to save space?") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                pendingImportUris?.let { uris ->
+                                    try {
+                                        var deletedCount = 0
+                                        uris.forEach { uri ->
+                                            contentResolver.delete(uri, null, null)
+                                            deletedCount++
+                                        }
+                                        FeedbackHelper.show(this@FolderDetailActivity, "Deleted $deletedCount original photo${if (deletedCount == 1) "" else "s"}")
+                                    } catch (e: SecurityException) {
+                                        FeedbackHelper.show(this@FolderDetailActivity, "Failed to delete: Permission denied")
+                                    } catch (e: Exception) {
+                                        FeedbackHelper.show(this@FolderDetailActivity, "Failed to delete originals")
+                                    }
+                                }
+                                showCleanupDialog = false
+                                pendingImportUris = null
+                            }) {
+                                Text("Delete")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { 
+                                showCleanupDialog = false 
+                                pendingImportUris = null
+                            }) {
+                                Text("Keep")
+                            }
+                        }
+                    )
+                }
+
                 FolderDetailScreen(
                     initialFolder = folder,
                     refreshTick = refreshTick,
@@ -177,7 +234,7 @@ class FolderDetailActivity : ComponentActivity() {
             }
         }
         if (importedCount > 0) {
-            Toast.makeText(this, "Imported $importedCount photo${if (importedCount == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+            FeedbackHelper.show(this, "Imported $importedCount photo${if (importedCount == 1) "" else "s"}")
             refreshTick++
         }
     }
@@ -205,7 +262,7 @@ class FolderDetailActivity : ComponentActivity() {
             }
             startActivity(Intent.createChooser(intent, "Share Photos"))
         } catch (_: Exception) {
-            Toast.makeText(this, "Failed to share photos", Toast.LENGTH_SHORT).show()
+            FeedbackHelper.show(this, "Failed to share photos")
         }
     }
 
@@ -254,6 +311,8 @@ private fun FolderDetailScreen(
     var showFolderSettingsDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showMoveDialog by remember { mutableStateOf(false) }
+    var showTimedDeletionDialog by remember { mutableStateOf(false) }
+    var previewPhoto by remember { mutableStateOf<File?>(null) }
 
     val context = LocalContext.current
     val extras = LocalIsoCamExtras.current
@@ -275,7 +334,7 @@ private fun FolderDetailScreen(
                     isEditingName = false
                 }
                 is CreateResult.Error -> {
-                    Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
+                    FeedbackHelper.show(context as Activity, result.message)
                 }
             }
         } else {
@@ -302,174 +361,186 @@ private fun FolderDetailScreen(
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
-                if (selectedPhotos.isNotEmpty()) {
-                    TopAppBar(
-                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                        navigationIcon = {
-                            IconButton(onClick = { selectedPhotos = emptySet() }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear selection")
-                            }
-                        },
-                        title = {
-                            Text("${selectedPhotos.size} selected", style = MaterialTheme.typography.titleMedium)
-                        },
-                        actions = {
-                            IconButton(onClick = { onSharePhotos(selectedPhotos.toList()) }) {
-                                Icon(Icons.Default.Share, contentDescription = "Share selected")
-                            }
-                            IconButton(onClick = { showMoveDialog = true }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Move selected")
-                            }
-                            IconButton(onClick = { showDeleteConfirmDialog = true }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete selected")
-                            }
-                        }
-                    )
-                } else {
-                    TopAppBar(
-                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                        title = {
-                            if (isEditingName) {
-                                val focusRequester = remember { FocusRequester() }
-
-                                LaunchedEffect(Unit) {
-                                    focusRequester.requestFocus()
+                if (previewPhoto == null) {
+                    if (selectedPhotos.isNotEmpty()) {
+                        TopAppBar(
+                            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                            navigationIcon = {
+                                IconButton(onClick = { selectedPhotos = emptySet() }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear selection")
                                 }
-
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.fillMaxWidth().padding(end = 8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = editedName,
-                                        onValueChange = { editedName = it },
-                                        singleLine = true,
+                            },
+                            title = {
+                                Text("${selectedPhotos.size} selected", style = MaterialTheme.typography.titleMedium)
+                            },
+                            actions = {
+                                IconButton(onClick = { onSharePhotos(selectedPhotos.toList()) }) {
+                                    Icon(Icons.Default.Share, contentDescription = "Share selected")
+                                }
+                                IconButton(onClick = { showMoveDialog = true }) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Move selected")
+                                }
+                                IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete selected")
+                                }
+                            }
+                        )
+                    } else {
+                        TopAppBar(
+                            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                            title = {
+                                if (isEditingName) {
+                                    val focusRequester = remember { FocusRequester() }
+    
+                                    LaunchedEffect(Unit) {
+                                        focusRequester.requestFocus()
+                                    }
+    
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth().padding(end = 8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = editedName,
+                                            onValueChange = { editedName = it },
+                                            singleLine = true,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .focusRequester(focusRequester),
+                                            textStyle = MaterialTheme.typography.titleMedium,
+                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                            keyboardActions = KeyboardActions(onDone = { commitRename() })
+                                        )
+                                        IconButton(onClick = { commitRename() }) {
+                                            Icon(Icons.Default.Check, contentDescription = "Save name")
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
-                                            .weight(1f)
-                                            .focusRequester(focusRequester),
-                                        textStyle = MaterialTheme.typography.titleMedium,
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                        keyboardActions = KeyboardActions(onDone = { commitRename() })
-                                    )
-                                    IconButton(onClick = { commitRename() }) {
-                                        Icon(Icons.Default.Check, contentDescription = "Save name")
+                                            .clickable {
+                                                editedName = currentFolder.name
+                                                isEditingName = true
+                                            }
+                                            .padding(vertical = 4.dp, horizontal = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = currentFolder.name,
+                                            style = MaterialTheme.typography.titleLarge
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Rename folder",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
                                     }
                                 }
-                            } else {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .clickable {
-                                            editedName = currentFolder.name
-                                            isEditingName = true
-                                        }
-                                        .padding(vertical = 4.dp, horizontal = 4.dp)
-                                ) {
-                                    Text(
-                                        text = currentFolder.name,
-                                        style = MaterialTheme.typography.titleLarge
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Rename folder",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        },
-                        navigationIcon = {
-                            IconButton(onClick = onBack) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                            }
-                        },
-                        actions = {
-                            Box {
-                                IconButton(onClick = { menuExpanded = true }) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "Folder options")
-                                }
-                                DropdownMenu(
-                                    expanded = menuExpanded,
-                                    onDismissRequest = { menuExpanded = false },
-                                    shape = MaterialTheme.shapes.extraLarge,
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Rename") },
-                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                                        onClick = {
-                                            menuExpanded = false
-                                            editedName = currentFolder.name
-                                            isEditingName = true
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Lock Folder") },
-                                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                                        onClick = {
-                                            menuExpanded = false
-                                            showLockDialog = true
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Folder Settings") },
-                                        leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                                        onClick = {
-                                            menuExpanded = false
-                                            showFolderSettingsDialog = true
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    )
-                }
-            },
-            bottomBar = {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    tonalElevation = 0.dp
-                ) {
-                    FolderNavTab.entries.forEach { tab ->
-                        val selected = tab == FolderNavTab.Folders
-                        val glowColor = extras.glow
-                        val selectedIconTint = if (selected && ThemeController.mode == ThemeMode.RainbowDolphins && glowColor != Color.Unspecified) {
-                            glowColor
-                        } else {
-                            MaterialTheme.colorScheme.onSecondaryContainer
-                        }
-
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                when (tab) {
-                                    FolderNavTab.Folders -> onBack()
-                                    FolderNavTab.Camera -> onCamera(currentFolder)
-                                    FolderNavTab.Settings -> onOpenSettings()
+                            },
+                            navigationIcon = {
+                                IconButton(onClick = onBack) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                                 }
                             },
-                            icon = {
-                                Icon(
-                                    imageVector = if (selected) tab.filledIcon else tab.outlinedIcon,
-                                    contentDescription = tab.label
-                                )
-                            },
-                            label = { Text(tab.label) },
-                            alwaysShowLabel = true,
-                            colors = NavigationBarItemDefaults.colors(
-                                indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
-                                selectedIconColor = selectedIconTint,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            actions = {
+                                Box {
+                                    IconButton(onClick = { menuExpanded = true }) {
+                                        Icon(Icons.Default.MoreVert, contentDescription = "Folder options")
+                                    }
+                                    DropdownMenu(
+                                        expanded = menuExpanded,
+                                        onDismissRequest = { menuExpanded = false },
+                                        shape = MaterialTheme.shapes.extraLarge,
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Rename") },
+                                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                editedName = currentFolder.name
+                                                isEditingName = true
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Lock Folder") },
+                                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                showLockDialog = true
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Folder Settings") },
+                                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                showFolderSettingsDialog = true
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Timed Deletion") },
+                                            leadingIcon = { Icon(Icons.Default.Timer, contentDescription = null) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                showTimedDeletionDialog = true
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         )
                     }
                 }
             },
+            bottomBar = {
+                if (previewPhoto == null) {
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        tonalElevation = 0.dp
+                    ) {
+                        FolderNavTab.entries.forEach { tab ->
+                            val selected = tab == FolderNavTab.Folders
+                            val glowColor = extras.glow
+                            val selectedIconTint = if (selected && ThemeController.mode == ThemeMode.RainbowDolphins && glowColor != Color.Unspecified) {
+                                glowColor
+                            } else {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            }
+    
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = {
+                                    when (tab) {
+                                        FolderNavTab.Folders -> onBack()
+                                        FolderNavTab.Camera -> onCamera(currentFolder)
+                                        FolderNavTab.Settings -> onOpenSettings()
+                                    }
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = if (selected) tab.filledIcon else tab.outlinedIcon,
+                                        contentDescription = tab.label
+                                    )
+                                },
+                                label = { Text(tab.label) },
+                                alwaysShowLabel = true,
+                                colors = NavigationBarItemDefaults.colors(
+                                    indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    selectedIconColor = selectedIconTint,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                        }
+                    }
+                }
+            },
             floatingActionButton = {
-                if (selectedPhotos.isEmpty()) {
+                if (previewPhoto == null && selectedPhotos.isEmpty()) {
                     val fabBrush = if (rainbow.isNotEmpty()) {
                         Brush.linearGradient(
                             listOf(
@@ -565,6 +636,8 @@ private fun FolderDetailScreen(
                                         onClick = {
                                             if (selectedPhotos.isNotEmpty()) {
                                                 selectedPhotos = if (isSelected) selectedPhotos - file else selectedPhotos + file
+                                            } else {
+                                                previewPhoto = file
                                             }
                                         },
                                         onLongClick = {
@@ -603,6 +676,106 @@ private fun FolderDetailScreen(
                 }
             }
 
+            // Full screen preview overlay
+            if (previewPhoto != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .clickable { previewPhoto = null },
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = previewPhoto,
+                        contentDescription = "Full Screen Photo",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+
+            // Timed Deletion Dialog
+            if (showTimedDeletionDialog) {
+                var selectedOption by remember { mutableStateOf("1 hour") }
+                
+                AlertDialog(
+                    onDismissRequest = { showTimedDeletionDialog = false },
+                    title = { Text("Timed Deletion") },
+                    text = {
+                        Column {
+                            listOf("1 hour", "1 day", "1 week", "Custom").forEach { option ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { 
+                                            if (option == "Custom") {
+                                                val cal = Calendar.getInstance()
+                                                DatePickerDialog(
+                                                    context,
+                                                    { _, year, month, dayOfMonth ->
+                                                        val c = Calendar.getInstance()
+                                                        c.set(year, month, dayOfMonth)
+                                                        val settings = FolderRepository.loadSettings(currentFolder)
+                                                        FolderRepository.saveSettings(currentFolder, settings.copy(expirationDate = c.timeInMillis))
+                                                        FeedbackHelper.show(context as Activity, "Folder will delete on ${c.time}")
+                                                        showTimedDeletionDialog = false
+                                                    },
+                                                    cal.get(Calendar.YEAR),
+                                                    cal.get(Calendar.MONTH),
+                                                    cal.get(Calendar.DAY_OF_MONTH)
+                                                ).apply {
+                                                    datePicker.minDate = System.currentTimeMillis()
+                                                }.show()
+                                            } else {
+                                                selectedOption = option
+                                            }
+                                        }
+                                        .padding(vertical = 12.dp)
+                                ) {
+                                    RadioButton(
+                                        selected = (selectedOption == option),
+                                        onClick = null // let the row handle it
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(option)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            if (selectedOption != "Custom") {
+                                val offset = when (selectedOption) {
+                                    "1 hour" -> 1000L * 60 * 60
+                                    "1 day" -> 1000L * 60 * 60 * 24
+                                    "1 week" -> 1000L * 60 * 60 * 24 * 7
+                                    else -> 0L
+                                }
+                                val settings = FolderRepository.loadSettings(currentFolder)
+                                FolderRepository.saveSettings(currentFolder, settings.copy(expirationDate = System.currentTimeMillis() + offset))
+                                FeedbackHelper.show(context as Activity, "Timed deletion set")
+                            }
+                            showTimedDeletionDialog = false
+                        }) {
+                            Text("Set")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { 
+                            val settings = FolderRepository.loadSettings(currentFolder)
+                            if (settings.expirationDate != null) {
+                                FolderRepository.saveSettings(currentFolder, settings.copy(expirationDate = null))
+                                FeedbackHelper.show(context as Activity, "Timed deletion cleared")
+                            }
+                            showTimedDeletionDialog = false 
+                        }) {
+                            Text("Clear")
+                        }
+                    }
+                )
+            }
+
             // Folder Settings Dialog
             if (showFolderSettingsDialog) {
                 FolderSettingsDialog(
@@ -618,7 +791,7 @@ private fun FolderDetailScreen(
                     onDismiss = { showLockDialog = false },
                     onSetPasscode = { passcode ->
                         FolderRepository.setPasscode(currentFolder, passcode)
-                        Toast.makeText(context, "Folder locked with passcode", Toast.LENGTH_SHORT).show()
+                        FeedbackHelper.show(context as Activity, "Folder locked with passcode")
                         showLockDialog = false
                     }
                 )
@@ -631,8 +804,8 @@ private fun FolderDetailScreen(
                     onDismissRequest = { showDeleteConfirmDialog = false },
                     shape = MaterialTheme.shapes.extraLarge,
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    title = { Text("Delete $count photo${if (count == 1) "" else "s"}") },
-                    text = { Text("Are you sure you want to remove these photos? This action cannot be undone.") },
+                    title = { Text("Delete Photo") },
+                    text = { Text("Are you sure you want to remove ${if (count == 1) "this photo" else "these photos"}?") },
                     confirmButton = {
                         TextButton(
                             onClick = {
@@ -640,13 +813,13 @@ private fun FolderDetailScreen(
                                 selectedPhotos.forEach { file ->
                                     if (file.delete()) deletedCount++
                                 }
-                                Toast.makeText(context, "Deleted $deletedCount photo${if (deletedCount == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+                                FeedbackHelper.show(context as Activity, "Deleted $deletedCount photo${if (deletedCount == 1) "" else "s"}")
                                 selectedPhotos = emptySet()
                                 photos = FolderRepository.listPhotos(currentFolder)
                                 showDeleteConfirmDialog = false
                             }
                         ) {
-                            Text("Delete", color = MaterialTheme.colorScheme.error)
+                            Text("Yes")
                         }
                     },
                     dismissButton = {
@@ -674,7 +847,7 @@ private fun FolderDetailScreen(
                                 movedCount++
                             }
                         }
-                        Toast.makeText(context, "Moved $movedCount photo${if (movedCount == 1) "" else "s"} to ${destFolderItem.name}", Toast.LENGTH_SHORT).show()
+                        FeedbackHelper.show(context as Activity, "Moved $movedCount photo${if (movedCount == 1) "" else "s"} to ${destFolderItem.name}")
                         selectedPhotos = emptySet()
                         photos = FolderRepository.listPhotos(currentFolder)
                         showMoveDialog = false
@@ -733,6 +906,18 @@ fun FolderSettingsDialog(
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation()
                 )
+                
+                if (settings.passcode != null) {
+                    TextButton(onClick = { 
+                        passcode = ""
+                        val updated = settings.copy(passcode = null)
+                        FolderRepository.saveSettings(folder, updated)
+                        FeedbackHelper.show(context as Activity, "Passcode removed")
+                        onDismiss()
+                    }) {
+                        Text("Remove Passcode", color = MaterialTheme.colorScheme.error)
+                    }
+                }
             }
         },
         confirmButton = {
@@ -740,7 +925,7 @@ fun FolderSettingsDialog(
                 onClick = {
                     val updated = settings.copy(icon = selectedIcon, passcode = passcode.ifBlank { null })
                     FolderRepository.saveSettings(folder, updated)
-                    Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
+                    FeedbackHelper.show(context as Activity, "Settings saved")
                     onSave()
                     onDismiss()
                 }

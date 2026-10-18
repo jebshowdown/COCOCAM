@@ -174,7 +174,10 @@ object FolderRepository {
     }
 
     fun exportFolderToPdf(context: Context, folder: File): File? {
-        val photos = listPhotos(folder)
+        return exportPhotosToPdf(context, listPhotos(folder), folder.name)
+    }
+
+    fun exportPhotosToPdf(context: Context, photos: List<File>, pdfName: String): File? {
         if (photos.isEmpty()) return null
 
         val pdfDocument = PdfDocument()
@@ -224,7 +227,7 @@ object FolderRepository {
                 finalBitmap.recycle()
             }
             val exportDir = File(context.cacheDir, "exports").also { it.mkdirs() }
-            val exportFile = File(exportDir, "${folder.name}.pdf")
+            val exportFile = File(exportDir, "$pdfName.pdf")
             FileOutputStream(exportFile).use { out ->
                 pdfDocument.writeTo(out)
             }

@@ -324,9 +324,8 @@ class CameraActivity : ComponentActivity() {
         // 3. snapchat-style circular ring drawable for capture button
         val ringDrawable = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(Color.TRANSPARENT)
-            setStroke(10, Color.WHITE)
-            alpha = 180
+            setColor(Color.argb(160, 0, 0, 0)) // Translucent dark background matching flip/flash/back buttons
+            setStroke(8, Color.WHITE) // Crisp outer white stroke
         }
 
         val captureButton = Button(this).apply {
@@ -629,6 +628,7 @@ class CameraActivity : ComponentActivity() {
     // full-screen preview with Google Photos style bottom action bar (Share, Move & Delete)
     private fun showFullscreenPreview(photoBytes: ByteArray) {
         val root = window.decorView.rootView as ViewGroup
+        var currentIndex = photoQueue.indexOf(photoBytes).coerceAtLeast(0)
 
         val previewOverlay = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -638,11 +638,22 @@ class CameraActivity : ComponentActivity() {
         }
         activePreviewOverlay = previewOverlay
 
-        val bitmap = getRotatedBitmap(photoBytes)
         val fullImageView = ImageView(this).apply {
-            setImageBitmap(bitmap)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
+
+        fun updateCurrentPhotoDisplay() {
+            if (photoQueue.isEmpty()) {
+                closePreviewOverlay(root, previewOverlay)
+                return
+            }
+            currentIndex = currentIndex.coerceIn(0, photoQueue.size - 1)
+            val currentBytes = photoQueue[currentIndex]
+            val bitmap = getRotatedBitmap(currentBytes)
+            fullImageView.setImageBitmap(bitmap)
+        }
+
+        updateCurrentPhotoDisplay()
 
         previewOverlay.addView(fullImageView, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -708,31 +719,44 @@ class CameraActivity : ComponentActivity() {
 
         // 1. Share button
         val shareButton = createActionBtn(R.drawable.ic_share, getString(R.string.btn_share)) {
-            sharePhoto(photoBytes)
+            if (currentIndex in photoQueue.indices) {
+                sharePhoto(photoQueue[currentIndex])
+            }
         }
         
         // 2. Move button
         val moveButton = createActionBtn(R.drawable.ic_folder, "Move") {
-            showMovePhotoFolderDialog(photoBytes) {
-                closePreviewOverlay(root, previewOverlay)
+            if (currentIndex in photoQueue.indices) {
+                val targetBytes = photoQueue[currentIndex]
+                showMovePhotoFolderDialog(targetBytes) {
+                    if (photoQueue.isEmpty()) {
+                        closePreviewOverlay(root, previewOverlay)
+                    } else {
+                        updateCurrentPhotoDisplay()
+                    }
+                }
             }
         }
         
         // 3. Delete button
         val deleteButton = createActionBtn(R.drawable.ic_delete, getString(R.string.btn_delete)) {
-            AlertDialog.Builder(this@CameraActivity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Delete Photo")
-                .setMessage("Are you sure you want to remove this photo?")
-                .setPositiveButton("Yes") { _, _ ->
-                    val photoIndex = photoQueue.indexOf(photoBytes)
-                    if (photoIndex != -1) {
-                        photoQueue.removeAt(photoIndex)
+            if (currentIndex in photoQueue.indices) {
+                val targetBytes = photoQueue[currentIndex]
+                AlertDialog.Builder(this@CameraActivity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("Delete Photo")
+                    .setMessage("Are you sure you want to remove this photo?")
+                    .setPositiveButton("Yes") { _, _ ->
+                        photoQueue.remove(targetBytes)
                         updateQueuePreview()
+                        if (photoQueue.isEmpty()) {
+                            closePreviewOverlay(root, previewOverlay)
+                        } else {
+                            updateCurrentPhotoDisplay()
+                        }
                     }
-                    closePreviewOverlay(root, previewOverlay)
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
         }
         
         bottomBar.addView(shareButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -741,12 +765,29 @@ class CameraActivity : ComponentActivity() {
 
         previewOverlay.addView(bottomBar, bottomBarParams)
 
-        // swipe or tap background (excluding bottom bar) to close preview smoothly
+        // swipe left/right or tap background (excluding bottom bar) to close preview smoothly
         val previewGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                if (e1 != null && abs(e1.x - e2.x) > 100) {
-                    closePreviewOverlay(root, previewOverlay)
-                    return true
+                if (e1 != null) {
+                    val diffX = e2.x - e1.x
+                    val diffY = e2.y - e1.y
+                    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 100 && Math.abs(velocityX) > 100) {
+                        if (diffX < 0) {
+                            // Swipe Left -> Next photo
+                            if (currentIndex < photoQueue.size - 1) {
+                                currentIndex++
+                                updateCurrentPhotoDisplay()
+                                return true
+                            }
+                        } else {
+                            // Swipe Right -> Previous photo
+                            if (currentIndex > 0) {
+                                currentIndex--
+                                updateCurrentPhotoDisplay()
+                                return true
+                            }
+                        }
+                    }
                 }
                 return false
             }

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -99,7 +100,7 @@ class MainActivity : ComponentActivity() {
         ThemeController.init(this)
 
         val initialTabStr = intent.getStringExtra("initial_tab")
-        val initialTab = if (initialTabStr == "Settings") HomeTab.Settings else HomeTab.Folders
+        val initialTab = if (initialTabStr == "Settings") HomeTab.Settings else HomeTab.Home
 
         setContent {
             IsoCamTheme {
@@ -119,14 +120,14 @@ private enum class HomeTab(
     val filledIcon: ImageVector,
     val outlinedIcon: ImageVector
 ) {
-    Folders("Folders", Icons.Filled.Folder, Icons.Outlined.Folder),
+    Home("Home", Icons.Filled.Folder, Icons.Outlined.Folder),
     Camera("Camera", Icons.Filled.PhotoCamera, Icons.Outlined.PhotoCamera),
     Settings("Settings", Icons.Filled.Settings, Icons.Outlined.Settings),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Folders) {
+private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Home) {
     var tab by rememberSaveable { mutableStateOf(initialTab) }
     val context = LocalContext.current
     val extras = LocalIsoCamExtras.current
@@ -197,7 +198,7 @@ private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Folders) {
             }
         ) { paddingValues ->
             when (tab) {
-                HomeTab.Folders -> FoldersScreen(refreshTick, paddingValues)
+                HomeTab.Home -> FoldersScreen(refreshTick, paddingValues)
                 HomeTab.Camera -> CenteredText("Launching camera...", Modifier.padding(paddingValues))
                 HomeTab.Settings -> SettingsScreen(paddingValues)
             }
@@ -245,6 +246,12 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
     val lastOpenedFolder = folders.find { it.path == lastOpenedPath } ?: folders.firstOrNull()
     val recentFolders = folders.sortedByDescending { it.lastModified }.take(5)
 
+    val recentLazyRowState = rememberLazyListState()
+
+    LaunchedEffect(recentFolders.firstOrNull()?.path) {
+        recentLazyRowState.scrollToItem(0)
+    }
+
     val topPadding = paddingValues.calculateTopPadding()
     val bottomPadding = paddingValues.calculateBottomPadding()
     val rainbow = LocalIsoCamExtras.current.rainbow
@@ -284,7 +291,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                     .fillMaxSize()
                     .padding(top = topPadding, bottom = bottomPadding)
             ) {
-                ScreenHeader(title = "Folders")
+                ScreenHeader(title = "Home")
                 if (ThemeController.mode == ThemeMode.RainbowDolphins) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -314,7 +321,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    ScreenHeader(title = "Folders")
+                    ScreenHeader(title = "Home")
                 }
 
                 // Hero Card
@@ -395,6 +402,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                             )
                             Spacer(Modifier.height(8.dp))
                             LazyRow(
+                                state = recentLazyRowState,
                                 contentPadding = PaddingValues(horizontal = 16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {

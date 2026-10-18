@@ -29,8 +29,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -337,13 +339,14 @@ private fun FolderDetailScreen(
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showMoveDialog by remember { mutableStateOf(false) }
     var showTimedDeletionDialog by remember { mutableStateOf(false) }
-    var previewPhoto by remember { mutableStateOf<File?>(null) }
+    var showBatchShareOptionsDialog by remember { mutableStateOf(false) }
+    var previewIndex by remember { mutableStateOf<Int?>(null) }
 
-    BackHandler(enabled = selectedPhotos.isNotEmpty() || previewPhoto != null) {
+    BackHandler(enabled = selectedPhotos.isNotEmpty() || previewIndex != null) {
         if (selectedPhotos.isNotEmpty()) {
             selectedPhotos = emptySet()
-        } else if (previewPhoto != null) {
-            previewPhoto = null
+        } else if (previewIndex != null) {
+            previewIndex = null
         }
     }
 
@@ -394,7 +397,7 @@ private fun FolderDetailScreen(
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
-                if (previewPhoto == null) {
+                if (previewIndex == null) {
                     if (selectedPhotos.isNotEmpty()) {
                         TopAppBar(
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -407,7 +410,7 @@ private fun FolderDetailScreen(
                                 Text("${selectedPhotos.size} selected", style = MaterialTheme.typography.titleMedium)
                             },
                             actions = {
-                                IconButton(onClick = { onSharePhotos(selectedPhotos.toList()) }) {
+                                IconButton(onClick = { showBatchShareOptionsDialog = true }) {
                                     Icon(Icons.Default.Share, contentDescription = "Share selected")
                                 }
                                 IconButton(onClick = { showMoveDialog = true }) {
@@ -569,7 +572,7 @@ private fun FolderDetailScreen(
                 }
             },
             bottomBar = {
-                if (previewPhoto == null) {
+                if (previewIndex == null) {
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surfaceContainer,
                         tonalElevation = 0.dp
@@ -613,7 +616,7 @@ private fun FolderDetailScreen(
                 }
             },
             floatingActionButton = {
-                if (previewPhoto == null && selectedPhotos.isEmpty()) {
+                if (previewIndex == null && selectedPhotos.isEmpty()) {
                     val fabBrush = if (rainbow.isNotEmpty()) {
                         Brush.linearGradient(
                             listOf(
@@ -681,7 +684,7 @@ private fun FolderDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(photos, key = { it.absolutePath }) { file ->
+                        itemsIndexed(photos, key = { _, file -> file.absolutePath }) { index, file ->
                             val isSelected = file in selectedPhotos
                             val interactionSource = remember { MutableInteractionSource() }
                             val isPressed by interactionSource.collectIsPressedAsState()
@@ -710,7 +713,7 @@ private fun FolderDetailScreen(
                                             if (selectedPhotos.isNotEmpty()) {
                                                 selectedPhotos = if (isSelected) selectedPhotos - file else selectedPhotos + file
                                             } else {
-                                                previewPhoto = file
+                                                previewIndex = index
                                             }
                                         },
                                         onLongClick = {
@@ -749,82 +752,101 @@ private fun FolderDetailScreen(
                 }
             }
 
-            // Full screen preview overlay
-            if (previewPhoto != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black)
-                        .zIndex(100f)
-                        .clickable { previewPhoto = null }
-                ) {
-                    AsyncImage(
-                        model = previewPhoto,
-                        contentDescription = "Full Screen Photo",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize().align(Alignment.Center)
-                    )
-                    
-                    // Bottom Action Bar
-                    Row(
+            // Full screen preview overlay with horizontal pager swiping
+            if (previewIndex != null && photos.isNotEmpty()) {
+                val safeIndex = previewIndex!!.coerceIn(0, photos.size - 1)
+                val pagerState = rememberPagerState(initialPage = safeIndex) { photos.size }
+                val currentPhoto = photos.getOrNull(pagerState.currentPage)
+
+                if (currentPhoto != null) {
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .background(Color.Black.copy(alpha = 0.8f))
-                            .padding(horizontal = 40.dp, vertical = 24.dp)
-                            .clickable(enabled = false) { }, // prevent clicks from dismissing
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
+                            .fillMaxSize()
+                            .background(Color.Black)
+                            .zIndex(100f)
+                            .clickable { previewIndex = null }
                     ) {
-                        // Share
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { previewPhoto?.let { onSharePhotos(listOf(it)) } }
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_share),
-                                contentDescription = "Share",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text("Share", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                        }
-
-                        // Move
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable {
-                                selectedPhotos = setOf(previewPhoto!!)
-                                showMoveDialog = true
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.fillMaxSize()
+                        ) { page ->
+                            val photoFile = photos.getOrNull(page)
+                            if (photoFile != null) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AsyncImage(
+                                        model = photoFile,
+                                        contentDescription = photoFile.name,
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
                             }
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_folder),
-                                contentDescription = "Move",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text("Move", color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
-
-                        // Delete
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable {
-                                selectedPhotos = setOf(previewPhoto!!)
-                                showDeleteConfirmDialog = true
-                            }
+                        
+                        // Bottom Action Bar
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .background(Color.Black.copy(alpha = 0.8f))
+                                .padding(horizontal = 40.dp, vertical = 24.dp)
+                                .clickable(enabled = false) { }, // prevent clicks from dismissing
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_delete),
-                                contentDescription = "Delete",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text("Delete", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            // Share
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable { onSharePhotos(listOf(currentPhoto)) }
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_share),
+                                    contentDescription = "Share",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text("Share", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            }
+
+                            // Move
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
+                                    selectedPhotos = setOf(currentPhoto)
+                                    showMoveDialog = true
+                                }
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_folder),
+                                    contentDescription = "Move",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text("Move", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            }
+
+                            // Delete
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
+                                    selectedPhotos = setOf(currentPhoto)
+                                    showDeleteConfirmDialog = true
+                                }
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_delete),
+                                    contentDescription = "Delete",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text("Delete", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            }
                         }
                     }
                 }
@@ -933,6 +955,55 @@ private fun FolderDetailScreen(
                 )
             }
 
+            // Batch Share Options Dialog
+            if (showBatchShareOptionsDialog) {
+                AlertDialog(
+                    onDismissRequest = { showBatchShareOptionsDialog = false },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    title = { Text("Share Selected Photos") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = {
+                                    showBatchShareOptionsDialog = false
+                                    onSharePhotos(selectedPhotos.toList())
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Share Images Directly")
+                            }
+                            TextButton(
+                                onClick = {
+                                    showBatchShareOptionsDialog = false
+                                    val pdfFile = FolderRepository.exportPhotosToPdf(context, selectedPhotos.toList(), "${currentFolder.name}_selected")
+                                    if (pdfFile != null) {
+                                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", pdfFile)
+                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "application/pdf"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(intent, "Export Selected PDF"))
+                                    } else {
+                                        FeedbackHelper.show(context as Activity, "Failed to export PDF")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Export Selected as PDF")
+                            }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showBatchShareOptionsDialog = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
             // Delete Confirmation Dialog
             if (showDeleteConfirmDialog) {
                 val count = selectedPhotos.size
@@ -954,8 +1025,8 @@ private fun FolderDetailScreen(
                                 }
                                 FeedbackHelper.show(context as Activity, "Deleted $deletedCount photo${if (deletedCount == 1) "" else "s"}")
                                 selectedPhotos = emptySet()
-                                previewPhoto = null
                                 photos = FolderRepository.listPhotos(currentFolder)
+                                if (photos.isEmpty()) previewIndex = null
                                 showDeleteConfirmDialog = false
                             }
                         ) {
@@ -995,8 +1066,8 @@ private fun FolderDetailScreen(
                         }
                         FeedbackHelper.show(context as Activity, "Moved $movedCount photo${if (movedCount == 1) "" else "s"} to ${destFolderItem.name}")
                         selectedPhotos = emptySet()
-                        previewPhoto = null
                         photos = FolderRepository.listPhotos(currentFolder)
+                        if (photos.isEmpty()) previewIndex = null
                         showMoveDialog = false
                     }
                 )

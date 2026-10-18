@@ -49,6 +49,7 @@ import com.group_a1.isocam.R
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
@@ -99,12 +100,23 @@ class CameraActivity : ComponentActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Constant front-facing bright white ring light overlay
+        // Constant front-facing clean rounded soft-glow ring light overlay
+        val metrics = resources.displayMetrics
+        val radiusPx = minOf(metrics.widthPixels, metrics.heightPixels) * 0.8f
+
         ringLightOverlay = View(this).apply {
             val ringLightGradient = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                setColor(Color.TRANSPARENT)
-                setStroke(120, Color.WHITE) // Constant bright white ring light frame
+                cornerRadius = 120f // Smooth rounded inner edges
+                gradientType = GradientDrawable.RADIAL_GRADIENT
+                colors = intArrayOf(
+                    Color.TRANSPARENT,
+                    Color.argb(40, 255, 255, 255),
+                    Color.argb(180, 255, 255, 255),
+                    Color.WHITE
+                )
+                setGradientCenter(0.5f, 0.5f)
+                gradientRadius = radiusPx
             }
             background = ringLightGradient
             visibility = View.GONE
@@ -319,28 +331,28 @@ class CameraActivity : ComponentActivity() {
             text = ""
             background = ringDrawable
             setOnClickListener { 
-                if (isFrontCamera && (flashMode == ImageCapture.FLASH_MODE_ON || flashMode == ImageCapture.FLASH_MODE_AUTO || isTorchOn)) {
-                    val overlay = View(this@CameraActivity).apply {
-                        val ringLightGradient = GradientDrawable().apply {
-                            shape = GradientDrawable.RECTANGLE
-                            gradientType = GradientDrawable.RADIAL_GRADIENT
-                            colors = intArrayOf(Color.TRANSPARENT, Color.argb(200, 255, 255, 255), Color.WHITE)
-                            setGradientCenter(0.5f, 0.5f)
-                            gradientRadius = resources.displayMetrics.widthPixels * 0.7f
+                val shouldFlash = isFrontCamera && !isTorchOn && (
+                    flashMode == ImageCapture.FLASH_MODE_ON || 
+                    (flashMode == ImageCapture.FLASH_MODE_AUTO && isLowLightEnvironment())
+                )
+
+                if (shouldFlash) {
+                    ringLightOverlay.visibility = View.VISIBLE
+                    ringLightOverlay.alpha = 0f
+                    ringLightOverlay.animate()
+                        .alpha(1f)
+                        .setDuration(150)
+                        .withEndAction {
+                            takePhoto()
+                            ringLightOverlay.animate()
+                                .alpha(0f)
+                                .setDuration(350)
+                                .withEndAction {
+                                    if (!isTorchOn) ringLightOverlay.visibility = View.GONE
+                                }
+                                .start()
                         }
-                        background = ringLightGradient
-                        alpha = 0f
-                    }
-                    rootLayout.addView(overlay, FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT, 
-                        FrameLayout.LayoutParams.MATCH_PARENT
-                    ))
-                    overlay.animate().alpha(1f).setDuration(200).withEndAction {
-                        takePhoto()
-                        overlay.animate().alpha(0f).setDuration(200).withEndAction {
-                            rootLayout.removeView(overlay)
-                        }.start()
-                    }.start()
+                        .start()
                 } else {
                     takePhoto() 
                 }
@@ -445,8 +457,15 @@ class CameraActivity : ComponentActivity() {
         baseContext, Manifest.permission.CAMERA
     ) == PackageManager.PERMISSION_GRANTED
 
+    private fun isLowLightEnvironment(): Boolean {
+        val calendar = Calendar.getInstance()
+        val hour = calendar.get(Calendar.HOUR_OF_DAY)
+        return hour < 7 || hour >= 19
+    }
+
     private fun updateFrontRingLight() {
-        if (isFrontCamera && (isTorchOn || flashMode == ImageCapture.FLASH_MODE_ON)) {
+        if (isFrontCamera && isTorchOn) {
+            ringLightOverlay.alpha = 1f
             ringLightOverlay.visibility = View.VISIBLE
         } else {
             ringLightOverlay.visibility = View.GONE

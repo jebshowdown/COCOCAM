@@ -483,28 +483,68 @@ private fun FolderDetailScreen(
                                                 isEditingName = true
                                             }
                                         )
-                                        DropdownMenuItem(
-                                            text = { Text("Lock Folder") },
-                                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                                            onClick = {
-                                                menuExpanded = false
-                                                showLockDialog = true
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Folder Settings") },
-                                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                                            onClick = {
-                                                menuExpanded = false
-                                                showFolderSettingsDialog = true
-                                            }
-                                        )
+                                        if (FolderRepository.isLocked(currentFolder)) {
+                                            DropdownMenuItem(
+                                                text = { Text("Update Passcode") },
+                                                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                                                onClick = {
+                                                    menuExpanded = false
+                                                    showLockDialog = true
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Remove Passcode") },
+                                                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                                                onClick = {
+                                                    menuExpanded = false
+                                                    FolderRepository.setPasscode(currentFolder, "")
+                                                    FeedbackHelper.show(context as Activity, "Passcode removed")
+                                                }
+                                            )
+                                        } else {
+                                            DropdownMenuItem(
+                                                text = { Text("Lock Folder") },
+                                                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                                                onClick = {
+                                                    menuExpanded = false
+                                                    showLockDialog = true
+                                                }
+                                            )
+                                        }
                                         DropdownMenuItem(
                                             text = { Text("Timed Deletion") },
                                             leadingIcon = { Icon(Icons.Default.Timer, contentDescription = null) },
                                             onClick = {
                                                 menuExpanded = false
                                                 showTimedDeletionDialog = true
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Export Photos as PDF") },
+                                            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                val pdfFile = FolderRepository.exportFolderToPdf(context, currentFolder)
+                                                if (pdfFile != null) {
+                                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", pdfFile)
+                                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                                        type = "application/pdf"
+                                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                    }
+                                                    context.startActivity(Intent.createChooser(intent, "Export PDF"))
+                                                } else {
+                                                    FeedbackHelper.show(context as Activity, "No photos to export into PDF")
+                                                }
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Delete Folder", color = MaterialTheme.colorScheme.error) },
+                                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                showDeleteConfirmDialog = true
+                                                selectedPhotos = emptySet()
                                             }
                                         )
                                     }

@@ -1,8 +1,11 @@
 package com.group_a1.isocam
 
 import android.content.Context
+import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfDocument
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -135,5 +138,49 @@ object FolderRepository {
     fun verifyPasscode(folder: File, input: String): Boolean {
         val code = loadSettings(folder).passcode
         return code != null && code == input
+    }
+
+    fun formatTimedDeletion(expirationDate: Long?): String? {
+        if (expirationDate == null) return null
+        val timeLeft = expirationDate - System.currentTimeMillis()
+        if (timeLeft <= 0) return "Expired"
+        
+        val totalMinutes = timeLeft / (1000 * 60)
+        val totalHours = totalMinutes / 60
+        val totalDays = totalHours / 24
+
+        return when {
+            totalDays >= 1 -> "Deletes in $totalDays day${if (totalDays == 1L) "" else "s"}"
+            totalHours >= 1 -> "Deletes in $totalHours hour${if (totalHours == 1L) "" else "s"}"
+            totalMinutes >= 1 -> "Deletes in $totalMinutes minute${if (totalMinutes == 1L) "" else "s"}"
+            else -> "Deletes in <1 minute"
+        }
+    }
+
+    fun exportFolderToPdf(context: Context, folder: File): File? {
+        val photos = listPhotos(folder)
+        if (photos.isEmpty()) return null
+
+        val pdfDocument = PdfDocument()
+        try {
+            photos.forEachIndexed { index, photoFile ->
+                val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath) ?: return@forEachIndexed
+                val pageInfo = PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, index + 1).create()
+                val page = pdfDocument.startPage(pageInfo)
+                page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+                pdfDocument.finishPage(page)
+                bitmap.recycle()
+            }
+            val exportDir = File(context.cacheDir, "exports").also { it.mkdirs() }
+            val exportFile = File(exportDir, "${folder.name}.pdf")
+            FileOutputStream(exportFile).use { out ->
+                pdfDocument.writeTo(out)
+            }
+            return exportFile
+        } catch (_: Exception) {
+            return null
+        } finally {
+            pdfDocument.close()
+        }
     }
 }

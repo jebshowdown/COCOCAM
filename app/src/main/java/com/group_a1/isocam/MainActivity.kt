@@ -3,9 +3,11 @@ package com.group_a1.isocam
 import android.content.Context
 import android.content.Intent
 import android.app.Activity
+import android.app.DatePickerDialog
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
+import java.util.Calendar
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -209,8 +211,12 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
     var folderToLock by remember { mutableStateOf<FolderItem?>(null) }
     var folderToUpdatePasscode by remember { mutableStateOf<FolderItem?>(null) }
     var folderToRemovePasscode by remember { mutableStateOf<FolderItem?>(null) }
+    var folderToTimedDeletion by remember { mutableStateOf<FolderItem?>(null) }
+    var folderToAuthenticate by remember { mutableStateOf<FolderItem?>(null) }
+    var pendingLockedAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    
     var sortOption by remember { mutableStateOf(SortOption.NameAsc) }
-    var folderMenuTarget by remember { mutableStateOf<FolderItem?>(null) }
+    var folderMenuTarget by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
     fun reload() {
@@ -221,8 +227,8 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
             SortOption.DateDesc -> folders.sortedByDescending { it.lastModified }
             SortOption.DateAsc -> folders.sortedBy { it.lastModified }
         }
-        // clear selection of deleted items
-        selectedFolders = selectedFolders.filter { s -> folders.any { it.path == s.path } }.toSet()
+        // clear selection of deleted or locked items
+        selectedFolders = selectedFolders.filter { s -> folders.any { it.path == s.path && !it.isLocked } }.toSet()
     }
 
     LaunchedEffect(refreshTick, sortOption) { reload() }
@@ -236,33 +242,31 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
     val bottomPadding = paddingValues.calculateBottomPadding()
     val rainbow = LocalIsoCamExtras.current.rainbow
 
-    fun exportPhotos(folder: FolderItem) {
-        try {
-            val uris = ArrayList<Uri>()
-            FolderRepository.listPhotos(File(folder.path)).forEach { photoFile ->
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    photoFile
-                )
-                uris.add(uri)
+    fun exportPhotosToPdf(folder: FolderItem) {
+        val pdfFile = FolderRepository.exportFolderToPdf(context, File(folder.path))
+        if (pdfFile != null) {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                pdfFile
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            if (uris.isNotEmpty()) {
-                val intent = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
-                    type = "image/jpeg"
-                    if (uris.size == 1) {
-                        putExtra(Intent.EXTRA_STREAM, uris[0])
-                    } else {
-                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                    }
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(Intent.createChooser(intent, "Export Photos"))
-            } else {
-                Toast.makeText(context, "No photos to export", Toast.LENGTH_SHORT).show()
-            }
-        } catch (_: Exception) {
-            Toast.makeText(context, "Failed to export", Toast.LENGTH_SHORT).show()
+            context.startActivity(Intent.createChooser(intent, "Export PDF"))
+        } else {
+            Toast.makeText(context, "No photos to export into PDF", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun executeWithPasscodeProtection(folder: FolderItem, action: () -> Unit) {
+        if (FolderRepository.isLocked(File(folder.path))) {
+            folderToAuthenticate = folder
+            pendingLockedAction = action
+        } else {
+            action()
         }
     }
 
@@ -319,22 +323,28 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                             HeroFolderCard(
                                 folder = hero,
                                 isSelected = isSelected,
-                                isMenuExpanded = folderMenuTarget?.path == hero.path,
+                                isMenuExpanded = (folderMenuTarget == "hero_${hero.path}"),
                                 onLongClick = {
-                                    selectedFolders = if (isSelected) selectedFolders - hero else selectedFolders + hero
+                                    if (hero.isLocked) {
+                                        Toast.makeText(context, "Locked folder cannot be selected", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        selectedFolders = if (isSelected) selectedFolders - hero else selectedFolders + hero
+                                    }
                                 },
                                 onClick = {
                                     if (selectedFolders.isNotEmpty()) {
-                                        selectedFolders = if (isSelected) selectedFolders - hero else selectedFolders + hero
+                                        if (!hero.isLocked) {
+                                            selectedFolders = if (isSelected) selectedFolders - hero else selectedFolders + hero
+                                        }
                                     } else {
                                         openFolder(context, hero) { folderToUnlock = hero }
                                     }
                                 },
-                                onMenuClick = { folderMenuTarget = hero },
+                                onMenuClick = { folderMenuTarget = "hero_${hero.path}" },
                                 onDismissMenu = { folderMenuTarget = null },
                                 onRename = {
                                     folderMenuTarget = null
-                                    folderToRename = hero
+                                    executeWithPasscodeProtection(hero) { folderToRename = hero }
                                 },
                                 onLock = {
                                     folderMenuTarget = null
@@ -348,14 +358,20 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                                     folderMenuTarget = null
                                     folderToRemovePasscode = hero
                                 },
+                                onTimedDeletion = {
+                                    folderMenuTarget = null
+                                    executeWithPasscodeProtection(hero) { folderToTimedDeletion = hero }
+                                },
                                 onExport = {
                                     folderMenuTarget = null
-                                    exportPhotos(hero)
+                                    executeWithPasscodeProtection(hero) { exportPhotosToPdf(hero) }
                                 },
                                 onDelete = {
                                     folderMenuTarget = null
-                                    selectedFolders = setOf(hero)
-                                    showDeleteConfirmDialog = true
+                                    executeWithPasscodeProtection(hero) {
+                                        selectedFolders = setOf(hero)
+                                        showDeleteConfirmDialog = true
+                                    }
                                 }
                             )
                         }
@@ -380,22 +396,28 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                                     RecentFolderCard(
                                         folder = folder,
                                         isSelected = isSelected,
-                                        isMenuExpanded = folderMenuTarget?.path == folder.path,
+                                        isMenuExpanded = (folderMenuTarget == "recent_${folder.path}"),
                                         onLongClick = {
-                                            selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
+                                            if (folder.isLocked) {
+                                                Toast.makeText(context, "Locked folder cannot be selected", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
+                                            }
                                         },
                                         onClick = {
                                             if (selectedFolders.isNotEmpty()) {
-                                                selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
+                                                if (!folder.isLocked) {
+                                                    selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
+                                                }
                                             } else {
                                                 openFolder(context, folder) { folderToUnlock = folder }
                                             }
                                         },
-                                        onMenuClick = { folderMenuTarget = folder },
+                                        onMenuClick = { folderMenuTarget = "recent_${folder.path}" },
                                         onDismissMenu = { folderMenuTarget = null },
                                         onRename = {
                                             folderMenuTarget = null
-                                            folderToRename = folder
+                                            executeWithPasscodeProtection(folder) { folderToRename = folder }
                                         },
                                         onLock = {
                                             folderMenuTarget = null
@@ -409,14 +431,20 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                                             folderMenuTarget = null
                                             folderToRemovePasscode = folder
                                         },
+                                        onTimedDeletion = {
+                                            folderMenuTarget = null
+                                            executeWithPasscodeProtection(folder) { folderToTimedDeletion = folder }
+                                        },
                                         onExport = {
                                             folderMenuTarget = null
-                                            exportPhotos(folder)
+                                            executeWithPasscodeProtection(folder) { exportPhotosToPdf(folder) }
                                         },
                                         onDelete = {
                                             folderMenuTarget = null
-                                            selectedFolders = setOf(folder)
-                                            showDeleteConfirmDialog = true
+                                            executeWithPasscodeProtection(folder) {
+                                                selectedFolders = setOf(folder)
+                                                showDeleteConfirmDialog = true
+                                            }
                                         }
                                     )
                                 }
@@ -441,22 +469,28 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                         FolderRow(
                             folder = folder,
                             isSelected = isSelected,
-                            isMenuExpanded = folderMenuTarget?.path == folder.path,
+                            isMenuExpanded = (folderMenuTarget == "all_${folder.path}"),
                             onLongClick = {
-                                selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
+                                if (folder.isLocked) {
+                                    Toast.makeText(context, "Locked folder cannot be selected", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
+                                }
                             },
                             onClick = {
                                 if (selectedFolders.isNotEmpty()) {
-                                    selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
+                                    if (!folder.isLocked) {
+                                        selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
+                                    }
                                 } else {
                                     openFolder(context, folder) { folderToUnlock = folder }
                                 }
                             },
-                            onMenuClick = { folderMenuTarget = folder },
+                            onMenuClick = { folderMenuTarget = "all_${folder.path}" },
                             onDismissMenu = { folderMenuTarget = null },
                             onRename = {
                                 folderMenuTarget = null
-                                folderToRename = folder
+                                executeWithPasscodeProtection(folder) { folderToRename = folder }
                             },
                             onLock = {
                                 folderMenuTarget = null
@@ -470,14 +504,20 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                                 folderMenuTarget = null
                                 folderToRemovePasscode = folder
                             },
+                            onTimedDeletion = {
+                                folderMenuTarget = null
+                                executeWithPasscodeProtection(folder) { folderToTimedDeletion = folder }
+                            },
                             onExport = {
                                 folderMenuTarget = null
-                                exportPhotos(folder)
+                                executeWithPasscodeProtection(folder) { exportPhotosToPdf(folder) }
                             },
                             onDelete = {
                                 folderMenuTarget = null
-                                selectedFolders = setOf(folder)
-                                showDeleteConfirmDialog = true
+                                executeWithPasscodeProtection(folder) {
+                                    selectedFolders = setOf(folder)
+                                    showDeleteConfirmDialog = true
+                                }
                             }
                         )
                     }
@@ -485,7 +525,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
             }
         }
 
-        // Batch Action Contextual Top Bar (Highest elevation zIndex above everything)
+        // Batch Action Contextual Top Bar (Positions right at top without gap)
         if (selectedFolders.isNotEmpty()) {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -500,31 +540,9 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                 actions = {
                     IconButton(onClick = {
                         try {
-                            val uris = ArrayList<Uri>()
                             val sortedSelected = sortedFolders.filter { it in selectedFolders }
                             sortedSelected.forEach { folder ->
-                                FolderRepository.listPhotos(File(folder.path)).forEach { photoFile ->
-                                    val uri = FileProvider.getUriForFile(
-                                        context,
-                                        "${context.packageName}.fileprovider",
-                                        photoFile
-                                    )
-                                    uris.add(uri)
-                                }
-                            }
-                            if (uris.isNotEmpty()) {
-                                val intent = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
-                                    type = "image/jpeg"
-                                    if (uris.size == 1) {
-                                        putExtra(Intent.EXTRA_STREAM, uris[0])
-                                    } else {
-                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                                    }
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Share Photos"))
-                            } else {
-                                Toast.makeText(context, "No photos to share", Toast.LENGTH_SHORT).show()
+                                exportPhotosToPdf(folder)
                             }
                         } catch (_: Exception) {
                             Toast.makeText(context, "Failed to share", Toast.LENGTH_SHORT).show()
@@ -538,7 +556,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                 },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = topPadding)
+                    .fillMaxWidth()
                     .zIndex(10f)
             )
         }
@@ -663,6 +681,41 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
             )
         }
 
+        folderToTimedDeletion?.let { folder ->
+            TimedDeletionDialog(
+                folder = folder,
+                onDismiss = { folderToTimedDeletion = null },
+                onSetTimedDeletion = { expDate ->
+                    val folderFile = File(folder.path)
+                    val settings = FolderRepository.loadSettings(folderFile)
+                    FolderRepository.saveSettings(folderFile, settings.copy(expirationDate = expDate))
+                    reload()
+                }
+            )
+        }
+
+        folderToAuthenticate?.let { folder ->
+            UnlockFolderDialog(
+                folderName = folder.name,
+                onDismiss = {
+                    folderToAuthenticate = null
+                    pendingLockedAction = null
+                },
+                onUnlock = { passcode ->
+                    if (FolderRepository.verifyPasscode(File(folder.path), passcode)) {
+                        val action = pendingLockedAction
+                        folderToAuthenticate = null
+                        pendingLockedAction = null
+                        action?.invoke()
+                        true
+                    } else {
+                        FeedbackHelper.show(context as Activity, "Incorrect passcode")
+                        false
+                    }
+                }
+            )
+        }
+
         folderToUnlock?.let { folder ->
             UnlockFolderDialog(
                 folderName = folder.name,
@@ -724,6 +777,7 @@ private fun FolderOptionsMenu(
     onLock: () -> Unit,
     onUpdatePasscode: () -> Unit,
     onRemovePasscode: () -> Unit,
+    onTimedDeletion: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -753,7 +807,11 @@ private fun FolderOptionsMenu(
             )
         }
         DropdownMenuItem(
-            text = { Text("Export Photos") },
+            text = { Text("Timed Deletion") },
+            onClick = onTimedDeletion
+        )
+        DropdownMenuItem(
+            text = { Text("Export Photos as PDF") },
             onClick = onExport
         )
         DropdownMenuItem(
@@ -777,6 +835,7 @@ private fun HeroFolderCard(
     onLock: () -> Unit,
     onUpdatePasscode: () -> Unit,
     onRemovePasscode: () -> Unit,
+    onTimedDeletion: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -853,6 +912,7 @@ private fun HeroFolderCard(
                             onLock = onLock,
                             onUpdatePasscode = onUpdatePasscode,
                             onRemovePasscode = onRemovePasscode,
+                            onTimedDeletion = onTimedDeletion,
                             onExport = onExport,
                             onDelete = onDelete
                         )
@@ -906,6 +966,7 @@ private fun RecentFolderCard(
     onLock: () -> Unit,
     onUpdatePasscode: () -> Unit,
     onRemovePasscode: () -> Unit,
+    onTimedDeletion: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -947,6 +1008,7 @@ private fun RecentFolderCard(
                         onLock = onLock,
                         onUpdatePasscode = onUpdatePasscode,
                         onRemovePasscode = onRemovePasscode,
+                        onTimedDeletion = onTimedDeletion,
                         onExport = onExport,
                         onDelete = onDelete
                     )
@@ -982,6 +1044,7 @@ private fun FolderRow(
     onLock: () -> Unit,
     onUpdatePasscode: () -> Unit,
     onRemovePasscode: () -> Unit,
+    onTimedDeletion: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -1024,24 +1087,13 @@ private fun FolderRow(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (folder.expirationDate != null) {
-                    val timeLeft = folder.expirationDate - System.currentTimeMillis()
-                    if (timeLeft > 0) {
-                        val hours = timeLeft / (1000 * 60 * 60)
-                        val days = hours / 24
-                        val displayTime = if (days > 0) "$days days left" else "$hours hours left"
-                        Text(
-                            text = "Deletes in $displayTime",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    } else {
-                        Text(
-                            text = "Expired",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
+                val timeText = FolderRepository.formatTimedDeletion(folder.expirationDate)
+                if (timeText != null) {
+                    Text(
+                        text = timeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
             Box {
@@ -1056,6 +1108,7 @@ private fun FolderRow(
                     onLock = onLock,
                     onUpdatePasscode = onUpdatePasscode,
                     onRemovePasscode = onRemovePasscode,
+                    onTimedDeletion = onTimedDeletion,
                     onExport = onExport,
                     onDelete = onDelete
                 )
@@ -1604,6 +1657,90 @@ private fun NewFolderDialog(onDismiss: () -> Unit, onCreate: (String) -> String?
         },
         confirmButton = { TextButton(onClick = { error = onCreate(name) }) { Text("Create") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun TimedDeletionDialog(
+    folder: FolderItem,
+    onDismiss: () -> Unit,
+    onSetTimedDeletion: (Long?) -> Unit
+) {
+    var selectedOption by remember { mutableStateOf("1 hour") }
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Timed Deletion for: ${folder.name}") },
+        text = {
+            Column {
+                listOf("1 hour", "1 day", "1 week", "Custom").forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (option == "Custom") {
+                                    val cal = Calendar.getInstance()
+                                    DatePickerDialog(
+                                        context,
+                                        { _, year, month, dayOfMonth ->
+                                            val c = Calendar.getInstance()
+                                            c.set(year, month, dayOfMonth)
+                                            onSetTimedDeletion(c.timeInMillis)
+                                            Toast.makeText(context, "Folder will delete on ${c.time}", Toast.LENGTH_SHORT).show()
+                                            onDismiss()
+                                        },
+                                        cal.get(Calendar.YEAR),
+                                        cal.get(Calendar.MONTH),
+                                        cal.get(Calendar.DAY_OF_MONTH)
+                                    ).apply {
+                                        datePicker.minDate = System.currentTimeMillis()
+                                    }.show()
+                                } else {
+                                    selectedOption = option
+                                }
+                            }
+                            .padding(vertical = 12.dp)
+                    ) {
+                        RadioButton(
+                            selected = (selectedOption == option),
+                            onClick = null
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(option)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (selectedOption != "Custom") {
+                    val offset = when (selectedOption) {
+                        "1 hour" -> 1000L * 60 * 60
+                        "1 day" -> 1000L * 60 * 60 * 24
+                        "1 week" -> 1000L * 60 * 60 * 24 * 7
+                        else -> 0L
+                    }
+                    onSetTimedDeletion(System.currentTimeMillis() + offset)
+                    Toast.makeText(context, "Timed deletion set", Toast.LENGTH_SHORT).show()
+                }
+                onDismiss()
+            }) {
+                Text("Set")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                onSetTimedDeletion(null)
+                Toast.makeText(context, "Timed deletion cleared", Toast.LENGTH_SHORT).show()
+                onDismiss()
+            }) {
+                Text("Clear")
+            }
+        }
     )
 }
 

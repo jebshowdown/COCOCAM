@@ -113,6 +113,7 @@ class FolderDetailActivity : ComponentActivity() {
             return
         }
         currentFolderFile = folder
+        FolderRepository.markFolderOpened(folder)
 
         val alreadyAuthenticated = intent.getBooleanExtra(EXTRA_IS_AUTHENTICATED, false)
 

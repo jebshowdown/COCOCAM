@@ -142,6 +142,12 @@ object FolderRepository {
         return code != null && code == input
     }
 
+    fun markFolderOpened(folder: File) {
+        try {
+            folder.setLastModified(System.currentTimeMillis())
+        } catch (_: Exception) {}
+    }
+
     fun formatTimedDeletion(expirationDate: Long?): String? {
         if (expirationDate == null) return null
         val timeLeft = expirationDate - System.currentTimeMillis()
@@ -177,43 +183,45 @@ object FolderRepository {
                 // First pass: decode dimensions to downsample efficiently
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(photoFile.absolutePath, options)
-                
-                val reqWidth = 1280
-                val reqHeight = 1280
+                val origW = options.outWidth
+                val origH = options.outHeight
+                if (origW <= 0 || origH <= 0) return@forEachIndexed
+
+                // Cap max dimension to 960px for lightweight multi-page PDFs
+                val maxDim = 960f
+                val scale = minOf(1f, maxDim / maxOf(origW, origH))
+                val targetW = (origW * scale).toInt().coerceAtLeast(1)
+                val targetH = (origH * scale).toInt().coerceAtLeast(1)
+
                 var sampleSize = 1
-                if (options.outWidth > reqWidth || options.outHeight > reqHeight) {
-                    val halfWidth = options.outWidth / 2
-                    val halfHeight = options.outHeight / 2
-                    while (halfWidth / sampleSize >= reqWidth && halfHeight / sampleSize >= reqHeight) {
-                        sampleSize *= 2
-                    }
+                while (origW / (sampleSize * 2) >= targetW && origH / (sampleSize * 2) >= targetH) {
+                    sampleSize *= 2
                 }
 
                 val decodeOptions = BitmapFactory.Options().apply {
                     inSampleSize = sampleSize
-                    inPreferredConfig = Bitmap.Config.RGB_565 // Memory and size efficient
+                    inPreferredConfig = Bitmap.Config.RGB_565
                 }
 
-                val originalBitmap = BitmapFactory.decodeFile(photoFile.absolutePath, decodeOptions) ?: return@forEachIndexed
-                
-                // Aggressive JPEG compression into byte stream for Crowdmark limits
-                val stream = ByteArrayOutputStream()
-                originalBitmap.compress(Bitmap.CompressFormat.JPEG, 65, stream)
-                val compressedBytes = stream.toByteArray()
-                val compressedBitmap = BitmapFactory.decodeByteArray(compressedBytes, 0, compressedBytes.size)
+                val rawBitmap = BitmapFactory.decodeFile(photoFile.absolutePath, decodeOptions) ?: return@forEachIndexed
+                val scaledBitmap = Bitmap.createScaledBitmap(rawBitmap, targetW, targetH, true)
+                if (scaledBitmap != rawBitmap) {
+                    rawBitmap.recycle()
+                }
 
-                val pageInfo = PdfDocument.PageInfo.Builder(
-                    compressedBitmap.width,
-                    compressedBitmap.height,
-                    index + 1
-                ).create()
-                
+                // Compress to 60% JPEG byte stream for Crowdmark limits
+                val stream = ByteArrayOutputStream()
+                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream)
+                val compressedBytes = stream.toByteArray()
+                val finalBitmap = BitmapFactory.decodeByteArray(compressedBytes, 0, compressedBytes.size)
+
+                val pageInfo = PdfDocument.PageInfo.Builder(targetW, targetH, index + 1).create()
                 val page = pdfDocument.startPage(pageInfo)
-                page.canvas.drawBitmap(compressedBitmap, 0f, 0f, null)
+                page.canvas.drawBitmap(finalBitmap, 0f, 0f, null)
                 pdfDocument.finishPage(page)
 
-                originalBitmap.recycle()
-                compressedBitmap.recycle()
+                scaledBitmap.recycle()
+                finalBitmap.recycle()
             }
             val exportDir = File(context.cacheDir, "exports").also { it.mkdirs() }
             val exportFile = File(exportDir, "${folder.name}.pdf")

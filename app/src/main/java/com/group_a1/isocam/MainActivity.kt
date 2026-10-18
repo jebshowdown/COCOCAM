@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PhotoCamera
@@ -242,7 +243,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
     val prefs = remember { context.getSharedPreferences("isocam_prefs", Context.MODE_PRIVATE) }
     val lastOpenedPath = prefs.getString("last_opened_folder_path", null)
     val lastOpenedFolder = folders.find { it.path == lastOpenedPath } ?: folders.firstOrNull()
-    val recentFolders = folders.sortedByDescending { it.lastModified }
+    val recentFolders = folders.sortedByDescending { it.lastModified }.take(5)
 
     val topPadding = paddingValues.calculateTopPadding()
     val bottomPadding = paddingValues.calculateBottomPadding()
@@ -767,10 +768,12 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
 }
 
 private fun openFolder(context: Context, folder: FolderItem, onLocked: () -> Unit) {
-    if (FolderRepository.isLocked(File(folder.path))) {
+    val folderFile = File(folder.path)
+    if (FolderRepository.isLocked(folderFile)) {
         onLocked()
     } else {
-        FolderDetailActivity.start(context, folder.path)
+        FolderRepository.markFolderOpened(folderFile)
+        FolderDetailActivity.start(context, folder.path, isAuthenticated = true)
     }
 }
 
@@ -1024,7 +1027,8 @@ private fun RecentFolderCard(
                 text = folder.name,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             val n = folder.photoCount
             Text(

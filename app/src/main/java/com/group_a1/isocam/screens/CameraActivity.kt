@@ -119,6 +119,8 @@ class CameraActivity : ComponentActivity() {
                 gradientRadius = radiusPx
             }
             background = ringLightGradient
+            isClickable = false
+            isFocusable = false
             visibility = View.GONE
         }
         rootLayout.addView(ringLightOverlay, FrameLayout.LayoutParams(
@@ -364,6 +366,8 @@ class CameraActivity : ComponentActivity() {
             bottomMargin = 100
         }
         rootLayout.addView(captureButton, buttonParams)
+        captureButton.elevation = 30f
+        captureButton.bringToFront()
 
         // 4. Send button (bottom right): saves RAM queue to target folder and navigates to folder
         sendButton = TextView(this).apply {

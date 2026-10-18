@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -53,11 +54,17 @@ import com.group_a1.isocam.screens.CameraActivity
 import com.group_a1.isocam.ui.theme.DarkBackground
 import com.group_a1.isocam.ui.theme.DarkPrimary
 import com.group_a1.isocam.ui.theme.DarkSurface
+import com.group_a1.isocam.ui.theme.DolphinBackground
+import com.group_a1.isocam.ui.theme.DolphinPrimary
+import com.group_a1.isocam.ui.theme.DolphinRainbow
+import com.group_a1.isocam.ui.theme.DolphinSecondary
+import com.group_a1.isocam.ui.theme.DolphinTertiary
 import com.group_a1.isocam.ui.theme.IsoCamTheme
 import com.group_a1.isocam.ui.theme.LightBackground
 import com.group_a1.isocam.ui.theme.LightPrimary
 import com.group_a1.isocam.ui.theme.LightSurface
 import com.group_a1.isocam.ui.theme.LocalIsoCamExtras
+import com.group_a1.isocam.ui.theme.SparkleBubbleOverlay
 import com.group_a1.isocam.ui.theme.ThemeController
 import com.group_a1.isocam.ui.theme.ThemeMode
 import java.io.File
@@ -102,21 +109,26 @@ private enum class HomeTab(
 private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Folders) {
     var tab by rememberSaveable { mutableStateOf(initialTab) }
     val context = LocalContext.current
-    val headerTint = LocalIsoCamExtras.current.headerTint
+    val extras = LocalIsoCamExtras.current
+    val sunsetHeader = extras.sunsetHeader
     val backgroundColor = MaterialTheme.colorScheme.background
 
     Box(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
-        // Vertical gradient background fading from headerTint to background
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(240.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(headerTint, backgroundColor)
+        // Vertical gradient background fading from sunsetHeader into background over ~260dp
+        if (sunsetHeader.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(260.dp)
+                    .background(
+                        Brush.verticalGradient(sunsetHeader)
                     )
-                )
-        )
+            ) {
+                if (ThemeController.mode == ThemeMode.RainbowDolphins) {
+                    SparkleBubbleOverlay(modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
 
         Scaffold(
             containerColor = Color.Transparent,
@@ -127,6 +139,13 @@ private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Folders) {
                 ) {
                     HomeTab.entries.forEach { t ->
                         val selected = t == tab
+                        val glowColor = extras.glow
+                        val selectedIconTint = if (selected && ThemeController.mode == ThemeMode.RainbowDolphins && glowColor != Color.Unspecified) {
+                            glowColor
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        }
+
                         NavigationBarItem(
                             selected = selected,
                             onClick = {
@@ -147,7 +166,7 @@ private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Folders) {
                             alwaysShowLabel = true,
                             colors = NavigationBarItemDefaults.colors(
                                 indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
-                                selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                selectedIconColor = selectedIconTint,
                                 unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 selectedTextColor = MaterialTheme.colorScheme.onSurface,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -185,6 +204,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
 
     val topPadding = paddingValues.calculateTopPadding()
     val bottomPadding = paddingValues.calculateBottomPadding()
+    val rainbow = LocalIsoCamExtras.current.rainbow
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (folders.isEmpty()) {
@@ -194,7 +214,24 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                     .padding(top = topPadding, bottom = bottomPadding)
             ) {
                 ScreenHeader(title = "Folders")
-                CenteredText("No folders yet.\nTap + to create one.", Modifier.weight(1f))
+                if (ThemeController.mode == ThemeMode.RainbowDolphins) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                    ) {
+                        Text("✨ 🫧 🐬 🌊 ✨", style = MaterialTheme.typography.headlineLarge)
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "No folders yet.\nTap + to create one.",
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                } else {
+                    CenteredText("No folders yet.\nTap + to create one.", Modifier.weight(1f))
+                }
             }
         } else {
             LazyColumn(
@@ -266,15 +303,40 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
             }
         }
 
-        FloatingActionButton(
-            onClick = { showDialog = true },
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = bottomPadding + 16.dp)
-        ) {
-            Icon(Icons.Default.Add, contentDescription = "New folder")
+        val fabBrush = if (rainbow.isNotEmpty()) {
+            Brush.linearGradient(
+                listOf(
+                    MaterialTheme.colorScheme.primary,
+                    MaterialTheme.colorScheme.secondary,
+                    MaterialTheme.colorScheme.tertiary
+                )
+            )
+        } else null
+
+        if (fabBrush != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = bottomPadding + 16.dp)
+                    .clip(MaterialTheme.shapes.large)
+                    .background(fabBrush)
+                    .clickable { showDialog = true }
+                    .padding(16.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "New folder", tint = Color.White)
+            }
+        } else {
+            FloatingActionButton(
+                onClick = { showDialog = true },
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = bottomPadding + 16.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "New folder")
+            }
         }
 
         if (showDialog) {
@@ -322,60 +384,97 @@ private fun openFolder(context: Context, folder: FolderItem, onLocked: () -> Uni
 
 @Composable
 private fun HeroFolderCard(folder: FolderItem, onClick: () -> Unit) {
-    PressableCard(
-        onClick = onClick,
-        shape = MaterialTheme.shapes.large,
-        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("📁", style = MaterialTheme.typography.titleLarge)
-                    }
-                }
-                Spacer(Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = folder.name,
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onSurface
+    val glowColor = LocalIsoCamExtras.current.glow
+    val rainbow = LocalIsoCamExtras.current.rainbow
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        if (glowColor != Color.Unspecified) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(MaterialTheme.shapes.extraLarge)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(glowColor.copy(alpha = 0.22f), Color.Transparent)
                         )
-                        if (folder.isLocked) {
-                            Spacer(Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = "Locked folder",
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                    )
+            )
+        }
+
+        PressableCard(
+            onClick = onClick,
+            shape = MaterialTheme.shapes.extraLarge,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(folder.icon, style = MaterialTheme.typography.titleLarge)
                         }
                     }
-                    val n = folder.photoCount
-                    Text(
-                        text = "$n photo${if (n == 1) "" else "s"}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Spacer(Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = folder.name,
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (folder.isLocked) {
+                                Spacer(Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Locked folder",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        val n = folder.photoCount
+                        Text(
+                            text = "$n photo${if (n == 1) "" else "s"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                val progress = if (folder.photoCount > 0) (folder.photoCount / 50f).coerceIn(0.1f, 1f) else 0f
+                if (rainbow.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(progress)
+                                .fillMaxHeight()
+                                .clip(CircleShape)
+                                .background(Brush.horizontalGradient(rainbow))
+                        )
+                    }
+                } else {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(CircleShape),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     )
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            val progress = if (folder.photoCount > 0) (folder.photoCount / 50f).coerceIn(0.1f, 1f) else 0f
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(CircleShape),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
-            )
         }
     }
 }
@@ -386,6 +485,7 @@ private fun RecentFolderCard(folder: FolderItem, onClick: () -> Unit) {
         onClick = onClick,
         shape = MaterialTheme.shapes.medium,
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.width(160.dp)
     ) {
         Column(
@@ -397,7 +497,7 @@ private fun RecentFolderCard(folder: FolderItem, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("📁", style = MaterialTheme.typography.headlineMedium)
+                Text(folder.icon, style = MaterialTheme.typography.headlineMedium)
                 if (folder.isLocked) {
                     Icon(
                         imageVector = Icons.Default.Lock,
@@ -429,6 +529,7 @@ private fun FolderRow(folder: FolderItem, onClick: () -> Unit) {
         onClick = onClick,
         shape = MaterialTheme.shapes.medium,
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -437,7 +538,7 @@ private fun FolderRow(folder: FolderItem, onClick: () -> Unit) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("📁", style = MaterialTheme.typography.titleLarge)
+            Text(folder.icon, style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -474,7 +575,8 @@ private fun FolderRow(folder: FolderItem, onClick: () -> Unit) {
 
 @Composable
 private fun ScreenHeader(title: String) {
-    Box(
+    val rainbow = LocalIsoCamExtras.current.rainbow
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
@@ -484,6 +586,16 @@ private fun ScreenHeader(title: String) {
             style = MaterialTheme.typography.headlineLarge,
             color = MaterialTheme.colorScheme.onBackground
         )
+        if (rainbow.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.5f)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(Brush.horizontalGradient(rainbow))
+            )
+        }
     }
 }
 
@@ -575,47 +687,65 @@ private fun ThemePreviewCard(
         ThemeMode.System -> "System Default"
         ThemeMode.LightCoconut -> "Light Coconut"
         ThemeMode.DarkCoconut -> "Dark Coconut"
+        ThemeMode.RainbowDolphins -> "Rainbow Dolphins"
     }
 
-    val (bg, surface, primary) = when (mode) {
-        ThemeMode.System -> Triple(LightBackground, LightSurface, LightPrimary)
-        ThemeMode.LightCoconut -> Triple(LightBackground, LightSurface, LightPrimary)
-        ThemeMode.DarkCoconut -> Triple(DarkBackground, DarkSurface, DarkPrimary)
+    val swatches = when (mode) {
+        ThemeMode.System -> listOf(LightBackground, LightPrimary, LightSurface)
+        ThemeMode.LightCoconut -> listOf(LightBackground, LightPrimary, LightSurface)
+        ThemeMode.DarkCoconut -> listOf(DarkBackground, DarkPrimary, DarkSurface)
+        ThemeMode.RainbowDolphins -> listOf(DolphinBackground, DolphinPrimary, DolphinSecondary, DolphinTertiary)
     }
 
     PressableCard(
         onClick = onSelect,
         shape = MaterialTheme.shapes.medium,
         containerColor = if (isSelected) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(16.dp)
         ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                SwatchBox(bg)
-                SwatchBox(surface)
-                SwatchBox(primary)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    swatches.forEach { color ->
+                        SwatchBox(color)
+                    }
+                }
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
-            Spacer(Modifier.width(16.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f)
-            )
-            if (isSelected) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "Selected",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
+
+            if (mode == ThemeMode.RainbowDolphins) {
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Brush.horizontalGradient(DolphinRainbow))
                 )
             }
         }
@@ -638,6 +768,7 @@ private fun PressableCard(
     modifier: Modifier = Modifier,
     shape: Shape = MaterialTheme.shapes.medium,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
+    border: BorderStroke? = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     content: @Composable ColumnScope.() -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -659,6 +790,7 @@ private fun PressableCard(
         },
         shape = shape,
         color = containerColor,
+        border = border,
         interactionSource = interactionSource,
         content = { Column(content = content) }
     )
@@ -726,7 +858,7 @@ private fun NewFolderDialog(onDismiss: () -> Unit, onCreate: (String) -> String?
 
 @Composable
 private fun CenteredText(text: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

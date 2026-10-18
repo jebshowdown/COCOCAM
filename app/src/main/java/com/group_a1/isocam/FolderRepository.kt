@@ -11,7 +11,8 @@ data class FolderItem(
     val name: String,
     val path: String,
     val photoCount: Int,
-    val isLocked: Boolean = false
+    val isLocked: Boolean = false,
+    val icon: String = "📁"
 )
 
 sealed interface CreateResult {
@@ -34,11 +35,13 @@ object FolderRepository {
             .sortedBy { it.name.lowercase() }
             .map {
                 val dir = File(it.absolutePath)
+                val settings = loadSettings(dir)
                 FolderItem(
                     name = it.name,
                     path = it.absolutePath,
                     photoCount = listPhotos(dir).size,
-                    isLocked = isLocked(dir)
+                    isLocked = isLocked(dir),
+                    icon = settings.icon
                 )
             }
 
@@ -91,7 +94,7 @@ object FolderRepository {
 
     data class FolderSettings(
         val retentionDays: Int = 0,
-        val icon: String = "\uD83D\uDCC1",
+        val icon: String = "📁",
         val passcode: String? = null
     )
 

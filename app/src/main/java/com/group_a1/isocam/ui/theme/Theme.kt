@@ -16,7 +16,8 @@ import androidx.core.view.WindowCompat
 enum class ThemeMode {
     System,
     LightCoconut,
-    DarkCoconut
+    DarkCoconut,
+    RainbowDolphins
 }
 
 object ThemeController {
@@ -52,10 +53,24 @@ fun IsoCamTheme(
         ThemeMode.System -> isSystemInDarkTheme()
         ThemeMode.LightCoconut -> false
         ThemeMode.DarkCoconut -> true
+        ThemeMode.RainbowDolphins -> true
     }
 
-    val colorScheme = if (darkTheme) DarkCoconutColorScheme else LightCoconutColorScheme
-    val extras = if (darkTheme) DarkCoconutExtras else LightCoconutExtras
+    val colorScheme = when (mode) {
+        ThemeMode.System -> if (darkTheme) DarkCoconutColorScheme else LightCoconutColorScheme
+        ThemeMode.LightCoconut -> LightCoconutColorScheme
+        ThemeMode.DarkCoconut -> DarkCoconutColorScheme
+        ThemeMode.RainbowDolphins -> RainbowDolphinsColorScheme
+    }
+
+    val extras = when (mode) {
+        ThemeMode.System -> if (darkTheme) DarkCoconutExtras else LightCoconutExtras
+        ThemeMode.LightCoconut -> LightCoconutExtras
+        ThemeMode.DarkCoconut -> DarkCoconutExtras
+        ThemeMode.RainbowDolphins -> RainbowDolphinsExtras
+    }
+
+    val shapes = if (mode == ThemeMode.RainbowDolphins) RainbowDolphinsShapes else DefaultShapes
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -72,7 +87,7 @@ fun IsoCamTheme(
     CompositionLocalProvider(LocalIsoCamExtras provides extras) {
         MaterialTheme(
             colorScheme = colorScheme,
-            shapes = Shapes,
+            shapes = shapes,
             typography = Typography,
             content = content
         )

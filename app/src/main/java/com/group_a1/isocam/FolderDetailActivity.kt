@@ -15,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,9 +23,11 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -69,7 +72,9 @@ import coil.compose.AsyncImage
 import com.group_a1.isocam.screens.CameraActivity
 import com.group_a1.isocam.ui.theme.IsoCamTheme
 import com.group_a1.isocam.ui.theme.LocalIsoCamExtras
+import com.group_a1.isocam.ui.theme.SparkleBubbleOverlay
 import com.group_a1.isocam.ui.theme.ThemeController
+import com.group_a1.isocam.ui.theme.ThemeMode
 import java.io.File
 import java.io.FileOutputStream
 
@@ -98,7 +103,6 @@ class FolderDetailActivity : ComponentActivity() {
         }
         currentFolderFile = folder
 
-        // Save as last opened folder
         getSharedPreferences("isocam_prefs", MODE_PRIVATE)
             .edit()
             .putString("last_opened_folder_path", folder.absolutePath)
@@ -252,8 +256,10 @@ private fun FolderDetailScreen(
     var showMoveDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
-    val headerTint = LocalIsoCamExtras.current.headerTint
+    val extras = LocalIsoCamExtras.current
+    val sunsetHeader = extras.sunsetHeader
     val backgroundColor = MaterialTheme.colorScheme.background
+    val rainbow = extras.rainbow
 
     LaunchedEffect(currentFolder, refreshTick) {
         photos = FolderRepository.listPhotos(currentFolder)
@@ -278,17 +284,20 @@ private fun FolderDetailScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
-        // Top vertical gradient header fading from headerTint into background
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(240.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(headerTint, backgroundColor)
+        if (sunsetHeader.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(260.dp)
+                    .background(
+                        Brush.verticalGradient(sunsetHeader)
                     )
-                )
-        )
+            ) {
+                if (ThemeController.mode == ThemeMode.RainbowDolphins) {
+                    SparkleBubbleOverlay(modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
 
         Scaffold(
             containerColor = Color.Transparent,
@@ -424,6 +433,13 @@ private fun FolderDetailScreen(
                 ) {
                     FolderNavTab.entries.forEach { tab ->
                         val selected = tab == FolderNavTab.Folders
+                        val glowColor = extras.glow
+                        val selectedIconTint = if (selected && ThemeController.mode == ThemeMode.RainbowDolphins && glowColor != Color.Unspecified) {
+                            glowColor
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        }
+
                         NavigationBarItem(
                             selected = selected,
                             onClick = {
@@ -443,7 +459,7 @@ private fun FolderDetailScreen(
                             alwaysShowLabel = true,
                             colors = NavigationBarItemDefaults.colors(
                                 indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
-                                selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                selectedIconColor = selectedIconTint,
                                 unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 selectedTextColor = MaterialTheme.colorScheme.onSurface,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -454,24 +470,64 @@ private fun FolderDetailScreen(
             },
             floatingActionButton = {
                 if (selectedPhotos.isEmpty()) {
-                    FloatingActionButton(
-                        onClick = onImportPhotos,
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Import photos")
+                    val fabBrush = if (rainbow.isNotEmpty()) {
+                        Brush.linearGradient(
+                            listOf(
+                                MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.secondary,
+                                MaterialTheme.colorScheme.tertiary
+                            )
+                        )
+                    } else null
+
+                    if (fabBrush != null) {
+                        Box(
+                            modifier = Modifier
+                                .clip(MaterialTheme.shapes.large)
+                                .background(fabBrush)
+                                .clickable { onImportPhotos() }
+                                .padding(16.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Import photos", tint = Color.White)
+                        }
+                    } else {
+                        FloatingActionButton(
+                            onClick = onImportPhotos,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            shape = MaterialTheme.shapes.large
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Import photos")
+                        }
                     }
                 }
             }
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 if (photos.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            "No photos yet.\nTap + to import existing photos.",
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    if (ThemeController.mode == ThemeMode.RainbowDolphins) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Text("✨ 🐬 ✨", style = MaterialTheme.typography.headlineLarge)
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                "No photos yet.\nTap + to import existing photos.",
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    } else {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                "No photos yet.\nTap + to import existing photos.",
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 } else {
                     LazyVerticalGrid(
@@ -502,7 +558,7 @@ private fun FolderDetailScreen(
                                         scaleX = scale
                                         scaleY = scale
                                     }
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(MaterialTheme.shapes.medium)
                                     .combinedClickable(
                                         interactionSource = interactionSource,
                                         indication = ripple(),
@@ -638,6 +694,9 @@ fun FolderSettingsDialog(
     val context = LocalContext.current
     val settings = remember { FolderRepository.loadSettings(folder) }
     var passcode by remember { mutableStateOf(settings.passcode ?: "") }
+    var selectedIcon by remember { mutableStateOf(settings.icon) }
+
+    val presetIcons = listOf("🐬", "🌈", "✨", "🫧", "🐠", "🌊", "☀️", "🦄", "📁")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -645,7 +704,28 @@ fun FolderSettingsDialog(
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         title = { Text("Folder Settings") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Folder Icon", style = MaterialTheme.typography.titleMedium)
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(presetIcons) { icon ->
+                            Surface(
+                                onClick = { selectedIcon = icon },
+                                shape = MaterialTheme.shapes.small,
+                                color = if (selectedIcon == icon) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                                border = if (selectedIcon == icon) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(icon, style = MaterialTheme.typography.titleLarge)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = passcode,
                     onValueChange = { passcode = it },
@@ -658,7 +738,7 @@ fun FolderSettingsDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    val updated = settings.copy(passcode = passcode.ifBlank { null })
+                    val updated = settings.copy(icon = selectedIcon, passcode = passcode.ifBlank { null })
                     FolderRepository.saveSettings(folder, updated)
                     Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
                     onSave()

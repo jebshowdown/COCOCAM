@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">ISOCAM</string>
+    <string name="app_name">CoCoCam</string>
     <string name="btn_share">Share</string>
     <string name="btn_delete">Delete</string>
 </resources>

@@ -69,6 +69,7 @@ class CameraActivity : ComponentActivity() {
     
     private var isFrontCamera = false
     private var flashMode = ImageCapture.FLASH_MODE_OFF
+    private var isTorchOn = false
 
     // modern android way to handle runtime permissions safely
     private val requestPermissionLauncher = registerForActivityResult(
@@ -160,10 +161,8 @@ class CameraActivity : ComponentActivity() {
         rootLayout.addView(previewContainer, previewParams)
 
         // Flash Button
-        val flashButton = TextView(this).apply {
-            text = "⚡ Off"
-            setTextColor(Color.WHITE)
-            textSize = 14f
+        val flashButton = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(30, 20, 30, 20)
             background = GradientDrawable().apply {
@@ -171,35 +170,59 @@ class CameraActivity : ComponentActivity() {
                 cornerRadius = 40f
                 setColor(Color.argb(120, 0, 0, 0))
             }
+            
+            val flashIcon = ImageView(context).apply {
+                setImageResource(R.drawable.ic_flash)
+                layoutParams = LinearLayout.LayoutParams(40, 40)
+            }
+            val flashText = TextView(context).apply {
+                text = " Off"
+                setTextColor(Color.WHITE)
+                textSize = 14f
+            }
+            addView(flashIcon)
+            addView(flashText)
+
             setOnClickListener {
-                flashMode = when (flashMode) {
-                    ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_AUTO
-                    ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON
-                    else -> ImageCapture.FLASH_MODE_OFF
+                if (isTorchOn) {
+                    isTorchOn = false
+                    flashMode = ImageCapture.FLASH_MODE_OFF
+                } else {
+                    flashMode = when (flashMode) {
+                        ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_AUTO
+                        ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON
+                        ImageCapture.FLASH_MODE_ON -> {
+                            isTorchOn = true
+                            ImageCapture.FLASH_MODE_OFF // Use torch instead of flash
+                        }
+                        else -> ImageCapture.FLASH_MODE_OFF
+                    }
                 }
-                text = when (flashMode) {
-                    ImageCapture.FLASH_MODE_OFF -> "⚡ Off"
-                    ImageCapture.FLASH_MODE_AUTO -> "⚡ Auto"
-                    else -> "⚡ On"
+                
+                flashText.text = if (isTorchOn) " Torch" else when (flashMode) {
+                    ImageCapture.FLASH_MODE_OFF -> " Off"
+                    ImageCapture.FLASH_MODE_AUTO -> " Auto"
+                    else -> " On"
                 }
+                
                 imageCapture?.flashMode = flashMode
+                camera?.cameraControl?.enableTorch(isTorchOn)
             }
         }
         val flashParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            topMargin = 135
+            gravity = Gravity.BOTTOM or Gravity.START
+            bottomMargin = 240
+            leftMargin = 40
         }
         rootLayout.addView(flashButton, flashParams)
 
         // Camera Flip Button
-        val flipButton = TextView(this).apply {
-            text = "🔄"
-            setTextColor(Color.WHITE)
-            textSize = 24f
-            gravity = Gravity.CENTER
+        val flipButton = ImageView(this).apply {
+            setImageResource(R.drawable.ic_flip_camera)
+            setPadding(25, 25, 25, 25)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.argb(120, 0, 0, 0))
@@ -211,8 +234,8 @@ class CameraActivity : ComponentActivity() {
         }
         val flipParams = FrameLayout.LayoutParams(110, 110).apply {
             gravity = Gravity.BOTTOM or Gravity.START
-            bottomMargin = 140
-            leftMargin = 80
+            bottomMargin = 100
+            leftMargin = 40
         }
         rootLayout.addView(flipButton, flipParams)
 
@@ -241,6 +264,7 @@ class CameraActivity : ComponentActivity() {
         // Dynamic Window Insets listener to position header controls safely below status bar/cutout on any device
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { _, insets ->
             val statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val navBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
             val topMarginPx = if (statusBarHeight > 0) statusBarHeight + 24 else 120
 
             (backButton.layoutParams as FrameLayout.LayoutParams).apply { topMargin = topMarginPx }
@@ -249,8 +273,10 @@ class CameraActivity : ComponentActivity() {
             (previewContainer.layoutParams as FrameLayout.LayoutParams).apply { topMargin = topMarginPx }
             previewContainer.requestLayout()
             
-            (flashButton.layoutParams as FrameLayout.LayoutParams).apply { topMargin = topMarginPx + 15 }
+            (flashButton.layoutParams as FrameLayout.LayoutParams).apply { bottomMargin = navBarHeight + 240 }
             flashButton.requestLayout()
+            (flipButton.layoutParams as FrameLayout.LayoutParams).apply { bottomMargin = navBarHeight + 100 }
+            flipButton.requestLayout()
 
             insets
         }
@@ -267,9 +293,16 @@ class CameraActivity : ComponentActivity() {
             text = ""
             background = ringDrawable
             setOnClickListener { 
-                if (isFrontCamera && flashMode == ImageCapture.FLASH_MODE_ON) {
+                if (isFrontCamera && (flashMode == ImageCapture.FLASH_MODE_ON || flashMode == ImageCapture.FLASH_MODE_AUTO || isTorchOn)) {
                     val overlay = View(this@CameraActivity).apply {
-                        setBackgroundColor(Color.WHITE)
+                        val ringLightGradient = GradientDrawable().apply {
+                            shape = GradientDrawable.RECTANGLE
+                            gradientType = GradientDrawable.RADIAL_GRADIENT
+                            colors = intArrayOf(Color.TRANSPARENT, Color.argb(200, 255, 255, 255), Color.WHITE)
+                            setGradientCenter(0.5f, 0.5f)
+                            gradientRadius = resources.displayMetrics.widthPixels * 0.7f
+                        }
+                        background = ringLightGradient
                         alpha = 0f
                     }
                     rootLayout.addView(overlay, FrameLayout.LayoutParams(
@@ -595,16 +628,6 @@ class CameraActivity : ComponentActivity() {
                 val icon = ImageView(this@CameraActivity).apply {
                     if (iconRes != 0) {
                         setImageResource(iconRes)
-                    } else {
-                        // fallback for missing icon
-                        val txt = TextView(context).apply {
-                            text = "📁"
-                            textSize = 24f
-                        }
-                        addView(txt, LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                        ))
                     }
                 }
                 if (iconRes != 0) addView(icon, LinearLayout.LayoutParams(64, 64))
@@ -630,7 +653,7 @@ class CameraActivity : ComponentActivity() {
         }
         
         // 2. Move button
-        val moveButton = createActionBtn(0, "Move") {
+        val moveButton = createActionBtn(R.drawable.ic_folder, "Move") {
             FeedbackHelper.show(this, "Photo is still in RAM. Send to save first.")
         }
         

@@ -12,7 +12,6 @@ data class FolderItem(
     val path: String,
     val photoCount: Int,
     val isLocked: Boolean = false,
-    val icon: String = "📁",
     val expirationDate: Long? = null,
     val lastModified: Long = 0L
 )
@@ -42,7 +41,6 @@ object FolderRepository {
                     path = it.absolutePath,
                     photoCount = listPhotos(dir).size,
                     isLocked = isLocked(dir),
-                    icon = settings.icon,
                     expirationDate = settings.expirationDate,
                     lastModified = dir.lastModified()
                 )
@@ -97,7 +95,6 @@ object FolderRepository {
 
     data class FolderSettings(
         val retentionDays: Int = 0,
-        val icon: String = "📁",
         val passcode: String? = null,
         val expirationDate: Long? = null
     )
@@ -108,7 +105,6 @@ object FolderRepository {
         val json = JSONObject(File(folder, SETTINGS_FILE).readText())
         FolderSettings(
             retentionDays = json.optInt("retentionDays", 0),
-            icon = json.optString("icon", "📁"),
             passcode = json.optString("passcode", "").takeIf { it.isNotEmpty() },
             expirationDate = if (json.has("expirationDate")) json.optLong("expirationDate") else null
         )
@@ -117,7 +113,6 @@ object FolderRepository {
     fun saveSettings(folder: File, s: FolderSettings) {
         val json = JSONObject()
             .put("retentionDays", s.retentionDays)
-            .put("icon", s.icon)
         if (!s.passcode.isNullOrEmpty()) {
             json.put("passcode", s.passcode)
         }

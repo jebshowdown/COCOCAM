@@ -683,14 +683,43 @@ private fun FolderDetailScreen(
                         .fillMaxSize()
                         .background(Color.Black)
                         .clickable { previewPhoto = null },
-                    contentAlignment = Alignment.Center
                 ) {
                     AsyncImage(
                         model = previewPhoto,
                         contentDescription = "Full Screen Photo",
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize().align(Alignment.Center)
                     )
+                    
+                    // Bottom Action Bar
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.5f))
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        IconButton(onClick = { 
+                            previewPhoto?.let { onSharePhotos(listOf(it)) } 
+                        }) {
+                            Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
+                        }
+                        IconButton(onClick = {
+                            selectedPhotos = setOf(previewPhoto!!)
+                            showMoveDialog = true
+                            previewPhoto = null
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Move", tint = Color.White)
+                        }
+                        IconButton(onClick = {
+                            selectedPhotos = setOf(previewPhoto!!)
+                            showDeleteConfirmDialog = true
+                            previewPhoto = null
+                        }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.White)
+                        }
+                    }
                 }
             }
 
@@ -867,9 +896,6 @@ fun FolderSettingsDialog(
     val context = LocalContext.current
     val settings = remember { FolderRepository.loadSettings(folder) }
     var passcode by remember { mutableStateOf(settings.passcode ?: "") }
-    var selectedIcon by remember { mutableStateOf(settings.icon) }
-
-    val presetIcons = listOf("🐬", "🌈", "✨", "🫧", "🐠", "🌊", "☀️", "🦄", "📁")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -878,27 +904,6 @@ fun FolderSettingsDialog(
         title = { Text("Folder Settings") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Folder Icon", style = MaterialTheme.typography.titleMedium)
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(presetIcons) { icon ->
-                            Surface(
-                                onClick = { selectedIcon = icon },
-                                shape = MaterialTheme.shapes.small,
-                                color = if (selectedIcon == icon) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
-                                border = if (selectedIcon == icon) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-                                modifier = Modifier.size(44.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(icon, style = MaterialTheme.typography.titleLarge)
-                                }
-                            }
-                        }
-                    }
-                }
-
                 OutlinedTextField(
                     value = passcode,
                     onValueChange = { passcode = it },
@@ -923,7 +928,7 @@ fun FolderSettingsDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    val updated = settings.copy(icon = selectedIcon, passcode = passcode.ifBlank { null })
+                    val updated = settings.copy(passcode = passcode.ifBlank { null })
                     FolderRepository.saveSettings(folder, updated)
                     FeedbackHelper.show(context as Activity, "Settings saved")
                     onSave()

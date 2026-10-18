@@ -93,6 +93,7 @@ import java.io.File
 class MainActivity : ComponentActivity() {
 
     private var refreshTick by mutableIntStateOf(0)
+    private var activeTabState by mutableStateOf(HomeTab.Home)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,12 +101,25 @@ class MainActivity : ComponentActivity() {
         ThemeController.init(this)
 
         val initialTabStr = intent.getStringExtra("initial_tab")
-        val initialTab = if (initialTabStr == "Settings") HomeTab.Settings else HomeTab.Home
+        activeTabState = if (initialTabStr == "Settings") HomeTab.Settings else HomeTab.Home
 
         setContent {
             IsoCamTheme {
-                IsoCamApp(refreshTick, initialTab)
+                IsoCamApp(refreshTick, activeTabState) { tab ->
+                    activeTabState = tab
+                }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val initialTabStr = intent.getStringExtra("initial_tab")
+        if (initialTabStr == "Settings") {
+            activeTabState = HomeTab.Settings
+        } else if (initialTabStr == "Home") {
+            activeTabState = HomeTab.Home
         }
     }
 
@@ -127,8 +141,11 @@ private enum class HomeTab(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Home) {
-    var tab by rememberSaveable { mutableStateOf(initialTab) }
+private fun IsoCamApp(
+    refreshTick: Int,
+    currentTab: HomeTab = HomeTab.Home,
+    onTabSelected: (HomeTab) -> Unit
+) {
     val context = LocalContext.current
     val extras = LocalIsoCamExtras.current
     val sunsetHeader = extras.sunsetHeader
@@ -159,7 +176,7 @@ private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Home) {
                     tonalElevation = 0.dp
                 ) {
                     HomeTab.entries.forEach { t ->
-                        val selected = t == tab
+                        val selected = t == currentTab
                         val glowColor = extras.glow
                         val selectedIconTint = if (selected && ThemeController.mode == ThemeMode.RainbowDolphins && glowColor != Color.Unspecified) {
                             glowColor
@@ -174,7 +191,7 @@ private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Home) {
                                     val intent = Intent(context, CameraActivity::class.java)
                                     context.startActivity(intent)
                                 } else {
-                                    tab = t
+                                    onTabSelected(t)
                                 }
                             },
                             icon = {
@@ -197,7 +214,7 @@ private fun IsoCamApp(refreshTick: Int, initialTab: HomeTab = HomeTab.Home) {
                 }
             }
         ) { paddingValues ->
-            when (tab) {
+            when (currentTab) {
                 HomeTab.Home -> FoldersScreen(refreshTick, paddingValues)
                 HomeTab.Camera -> CenteredText("Launching camera...", Modifier.padding(paddingValues))
                 HomeTab.Settings -> SettingsScreen(paddingValues)

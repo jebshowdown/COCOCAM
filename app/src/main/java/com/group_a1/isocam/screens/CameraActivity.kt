@@ -765,44 +765,45 @@ class CameraActivity : ComponentActivity() {
 
         previewOverlay.addView(bottomBar, bottomBarParams)
 
-        // swipe left/right or tap background (excluding bottom bar) to close preview smoothly
-        val previewGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                if (e1 != null) {
-                    val diffX = e2.x - e1.x
-                    val diffY = e2.y - e1.y
-                    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 100 && Math.abs(velocityX) > 100) {
-                        if (diffX < 0) {
-                            // Swipe Left -> Next photo
+        var downX = 0f
+        var downY = 0f
+
+        previewOverlay.setOnTouchListener { view, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val deltaX = event.x - downX
+                    val deltaY = event.y - downY
+                    val absX = Math.abs(deltaX)
+                    val absY = Math.abs(deltaY)
+
+                    if (absX > absY && absX > 80) {
+                        if (deltaX < 0) {
+                            // Swipe Left -> Next photo in RAM queue
                             if (currentIndex < photoQueue.size - 1) {
                                 currentIndex++
                                 updateCurrentPhotoDisplay()
-                                return true
                             }
                         } else {
-                            // Swipe Right -> Previous photo
+                            // Swipe Right -> Previous photo in RAM queue
                             if (currentIndex > 0) {
                                 currentIndex--
                                 updateCurrentPhotoDisplay()
-                                return true
                             }
                         }
+                    } else if (absX < 30 && absY < 30) {
+                        // Tap -> dismiss preview
+                        view.performClick()
+                        closePreviewOverlay(root, previewOverlay)
                     }
+                    true
                 }
-                return false
+                else -> true
             }
-            override fun onSingleTapUp(e: MotionEvent): Boolean {
-                previewOverlay.performClick()
-                closePreviewOverlay(root, previewOverlay)
-                return true
-            }
-        })
-
-        previewOverlay.setOnTouchListener { view, event ->
-            if (event.action == MotionEvent.ACTION_UP) {
-                view.performClick()
-            }
-            previewGestureDetector.onTouchEvent(event)
         }
 
         root.addView(previewOverlay, FrameLayout.LayoutParams(

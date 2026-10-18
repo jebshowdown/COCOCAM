@@ -5,6 +5,7 @@ import android.app.DatePickerDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import androidx.activity.ComponentActivity
@@ -12,6 +13,7 @@ import androidx.activity.addCallback
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
@@ -104,6 +106,36 @@ class FolderDetailActivity : ComponentActivity() {
         }
     }
 
+    private val deleteOriginalsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            FeedbackHelper.show(this, "Original photo(s) deleted from gallery")
+        } else {
+            FeedbackHelper.show(this, "Kept original photos")
+        }
+    }
+
+    private fun deleteOriginalGalleryPhotos(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val pendingIntent = MediaStore.createDeleteRequest(contentResolver, uris)
+                deleteOriginalsLauncher.launch(
+                    IntentSenderRequest.Builder(pendingIntent.intentSender).build()
+                )
+            } else {
+                var deletedCount = 0
+                uris.forEach { uri ->
+                    if (contentResolver.delete(uri, null, null) > 0) deletedCount++
+                }
+                FeedbackHelper.show(this, "Deleted $deletedCount original photo${if (deletedCount == 1) "" else "s"}")
+            }
+        } catch (_: Exception) {
+            FeedbackHelper.show(this, "Could not delete original photos")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -164,22 +196,10 @@ class FolderDetailActivity : ComponentActivity() {
                             text = { Text("The photos have been imported. Do you want to delete the originals from your gallery to save space?") },
                             confirmButton = {
                                 TextButton(onClick = {
-                                    pendingImportUris?.let { uris ->
-                                        try {
-                                            var deletedCount = 0
-                                            uris.forEach { uri ->
-                                                contentResolver.delete(uri, null, null)
-                                                deletedCount++
-                                            }
-                                            FeedbackHelper.show(this@FolderDetailActivity, "Deleted $deletedCount original photo${if (deletedCount == 1) "" else "s"}")
-                                        } catch (_: SecurityException) {
-                                            FeedbackHelper.show(this@FolderDetailActivity, "Failed to delete: Permission denied")
-                                        } catch (_: Exception) {
-                                            FeedbackHelper.show(this@FolderDetailActivity, "Failed to delete originals")
-                                        }
-                                    }
+                                    val uris = pendingImportUris ?: emptyList()
                                     showCleanupDialog = false
                                     pendingImportUris = null
+                                    deleteOriginalGalleryPhotos(uris)
                                 }) {
                                     Text("Delete")
                                 }

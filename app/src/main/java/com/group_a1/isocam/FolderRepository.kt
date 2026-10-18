@@ -1,9 +1,11 @@
 package com.group_a1.isocam
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfDocument
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -144,16 +146,24 @@ object FolderRepository {
         if (expirationDate == null) return null
         val timeLeft = expirationDate - System.currentTimeMillis()
         if (timeLeft <= 0) return "Expired"
-        
+
         val totalMinutes = timeLeft / (1000 * 60)
         val totalHours = totalMinutes / 60
-        val totalDays = totalHours / 24
+        val days = totalHours / 24
+        val remainingHours = totalHours % 24
+        val remainingMinutes = totalMinutes % 60
 
         return when {
-            totalDays >= 1 -> "Deletes in $totalDays day${if (totalDays == 1L) "" else "s"}"
-            totalHours >= 1 -> "Deletes in $totalHours hour${if (totalHours == 1L) "" else "s"}"
-            totalMinutes >= 1 -> "Deletes in $totalMinutes minute${if (totalMinutes == 1L) "" else "s"}"
-            else -> "Deletes in <1 minute"
+            days >= 1 -> {
+                if (remainingHours > 0) "Deletes in $days day${if (days == 1L) "" else "s"}, $remainingHours hr${if (remainingHours == 1L) "" else "s"}"
+                else "Deletes in $days day${if (days == 1L) "" else "s"}"
+            }
+            totalHours >= 1 -> {
+                if (remainingMinutes > 0) "Deletes in $totalHours hr${if (totalHours == 1L) "" else "s"}, $remainingMinutes min${if (remainingMinutes == 1L) "" else "s"}"
+                else "Deletes in $totalHours hr${if (totalHours == 1L) "" else "s"}"
+            }
+            totalMinutes >= 1 -> "Deletes in $totalMinutes min${if (totalMinutes == 1L) "" else "s"}"
+            else -> "Deletes in <1 min"
         }
     }
 
@@ -164,12 +174,46 @@ object FolderRepository {
         val pdfDocument = PdfDocument()
         try {
             photos.forEachIndexed { index, photoFile ->
-                val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath) ?: return@forEachIndexed
-                val pageInfo = PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, index + 1).create()
+                // First pass: decode dimensions to downsample efficiently
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(photoFile.absolutePath, options)
+                
+                val reqWidth = 1280
+                val reqHeight = 1280
+                var sampleSize = 1
+                if (options.outWidth > reqWidth || options.outHeight > reqHeight) {
+                    val halfWidth = options.outWidth / 2
+                    val halfHeight = options.outHeight / 2
+                    while (halfWidth / sampleSize >= reqWidth && halfHeight / sampleSize >= reqHeight) {
+                        sampleSize *= 2
+                    }
+                }
+
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = Bitmap.Config.RGB_565 // Memory and size efficient
+                }
+
+                val originalBitmap = BitmapFactory.decodeFile(photoFile.absolutePath, decodeOptions) ?: return@forEachIndexed
+                
+                // Aggressive JPEG compression into byte stream for Crowdmark limits
+                val stream = ByteArrayOutputStream()
+                originalBitmap.compress(Bitmap.CompressFormat.JPEG, 65, stream)
+                val compressedBytes = stream.toByteArray()
+                val compressedBitmap = BitmapFactory.decodeByteArray(compressedBytes, 0, compressedBytes.size)
+
+                val pageInfo = PdfDocument.PageInfo.Builder(
+                    compressedBitmap.width,
+                    compressedBitmap.height,
+                    index + 1
+                ).create()
+                
                 val page = pdfDocument.startPage(pageInfo)
-                page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+                page.canvas.drawBitmap(compressedBitmap, 0f, 0f, null)
                 pdfDocument.finishPage(page)
-                bitmap.recycle()
+
+                originalBitmap.recycle()
+                compressedBitmap.recycle()
             }
             val exportDir = File(context.cacheDir, "exports").also { it.mkdirs() }
             val exportFile = File(exportDir, "${folder.name}.pdf")

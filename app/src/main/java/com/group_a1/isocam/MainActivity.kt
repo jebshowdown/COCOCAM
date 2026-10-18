@@ -11,6 +11,11 @@ import java.util.Calendar
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -37,6 +42,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -723,7 +729,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                 onUnlock = { passcode ->
                     if (FolderRepository.verifyPasscode(File(folder.path), passcode)) {
                         folderToUnlock = null
-                        FolderDetailActivity.start(context, folder.path)
+                        FolderDetailActivity.start(context, folder.path, isAuthenticated = true)
                         true
                     } else {
                         FeedbackHelper.show(context as Activity, "Incorrect passcode")
@@ -1161,6 +1167,7 @@ private fun SectionHeader(
     title: String,
     sortOption: SortOption? = null,
     onSortChanged: ((SortOption) -> Unit)? = null,
+    trailingIcon: ImageVector = Icons.Default.ChevronRight,
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -1222,7 +1229,7 @@ private fun SectionHeader(
             }
         } else {
             Icon(
-                imageVector = Icons.Default.ChevronRight,
+                imageVector = trailingIcon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
@@ -1235,6 +1242,7 @@ private fun SectionHeader(
 private fun SettingsScreen(paddingValues: PaddingValues) {
     val context = LocalContext.current
     val currentMode = ThemeController.mode
+    var appearanceExpanded by remember { mutableStateOf(false) }
 
     val topPadding = paddingValues.calculateTopPadding()
     val bottomPadding = paddingValues.calculateBottomPadding()
@@ -1255,17 +1263,27 @@ private fun SettingsScreen(paddingValues: PaddingValues) {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 SectionHeader(
                     icon = Icons.Outlined.Palette,
-                    title = "Appearance"
+                    title = "Appearance",
+                    trailingIcon = if (appearanceExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.ChevronRight,
+                    onClick = { appearanceExpanded = !appearanceExpanded }
                 )
-                Spacer(Modifier.height(12.dp))
 
-                ThemeMode.entries.forEach { mode ->
-                    ThemePreviewCard(
-                        mode = mode,
-                        isSelected = mode == currentMode,
-                        onSelect = { ThemeController.set(context, mode) }
-                    )
-                    Spacer(Modifier.height(8.dp))
+                AnimatedVisibility(
+                    visible = appearanceExpanded,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Column {
+                        Spacer(Modifier.height(12.dp))
+                        ThemeMode.entries.forEach { mode ->
+                            ThemePreviewCard(
+                                mode = mode,
+                                isSelected = mode == currentMode,
+                                onSelect = { ThemeController.set(context, mode) }
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                    }
                 }
             }
         }

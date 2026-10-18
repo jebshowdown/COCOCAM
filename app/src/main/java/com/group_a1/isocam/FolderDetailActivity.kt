@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
@@ -113,6 +114,8 @@ class FolderDetailActivity : ComponentActivity() {
         }
         currentFolderFile = folder
 
+        val alreadyAuthenticated = intent.getBooleanExtra(EXTRA_IS_AUTHENTICATED, false)
+
         getSharedPreferences("isocam_prefs", MODE_PRIVATE)
             .edit()
             .putString("last_opened_folder_path", folder.absolutePath)
@@ -124,7 +127,7 @@ class FolderDetailActivity : ComponentActivity() {
 
         setContent {
             IsoCamTheme {
-                var isUnlocked by remember { mutableStateOf(!FolderRepository.isLocked(folder)) }
+                var isUnlocked by remember { mutableStateOf(alreadyAuthenticated || !FolderRepository.isLocked(folder)) }
                 var showCleanupDialog by remember { mutableStateOf(false) }
 
                 LaunchedEffect(pendingImportUris) {
@@ -287,11 +290,13 @@ class FolderDetailActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_FOLDER_PATH = "folder_path"
+        private const val EXTRA_IS_AUTHENTICATED = "is_authenticated"
 
-        fun start(context: Context, folderPath: String) {
+        fun start(context: Context, folderPath: String, isAuthenticated: Boolean = false) {
             context.startActivity(
                 Intent(context, FolderDetailActivity::class.java)
                     .putExtra(EXTRA_FOLDER_PATH, folderPath)
+                    .putExtra(EXTRA_IS_AUTHENTICATED, isAuthenticated)
             )
         }
     }
@@ -332,6 +337,14 @@ private fun FolderDetailScreen(
     var showMoveDialog by remember { mutableStateOf(false) }
     var showTimedDeletionDialog by remember { mutableStateOf(false) }
     var previewPhoto by remember { mutableStateOf<File?>(null) }
+
+    BackHandler(enabled = selectedPhotos.isNotEmpty() || previewPhoto != null) {
+        if (selectedPhotos.isNotEmpty()) {
+            selectedPhotos = emptySet()
+        } else if (previewPhoto != null) {
+            previewPhoto = null
+        }
+    }
 
     val context = LocalContext.current
     val extras = LocalIsoCamExtras.current
@@ -783,7 +796,6 @@ private fun FolderDetailScreen(
                             modifier = Modifier.clickable {
                                 selectedPhotos = setOf(previewPhoto!!)
                                 showMoveDialog = true
-                                previewPhoto = null
                             }
                         ) {
                             Icon(
@@ -802,7 +814,6 @@ private fun FolderDetailScreen(
                             modifier = Modifier.clickable {
                                 selectedPhotos = setOf(previewPhoto!!)
                                 showDeleteConfirmDialog = true
-                                previewPhoto = null
                             }
                         ) {
                             Icon(
@@ -925,7 +936,10 @@ private fun FolderDetailScreen(
             if (showDeleteConfirmDialog) {
                 val count = selectedPhotos.size
                 AlertDialog(
-                    onDismissRequest = { showDeleteConfirmDialog = false },
+                    onDismissRequest = { 
+                        showDeleteConfirmDialog = false
+                        selectedPhotos = emptySet()
+                    },
                     shape = MaterialTheme.shapes.extraLarge,
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     title = { Text("Delete Photo") },
@@ -939,6 +953,7 @@ private fun FolderDetailScreen(
                                 }
                                 FeedbackHelper.show(context as Activity, "Deleted $deletedCount photo${if (deletedCount == 1) "" else "s"}")
                                 selectedPhotos = emptySet()
+                                previewPhoto = null
                                 photos = FolderRepository.listPhotos(currentFolder)
                                 showDeleteConfirmDialog = false
                             }
@@ -947,7 +962,10 @@ private fun FolderDetailScreen(
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                        TextButton(onClick = { 
+                            showDeleteConfirmDialog = false 
+                            selectedPhotos = emptySet()
+                        }) {
                             Text("Cancel")
                         }
                     }
@@ -961,7 +979,10 @@ private fun FolderDetailScreen(
                 }
                 MovePhotosDialog(
                     availableFolders = availableFolders,
-                    onDismiss = { showMoveDialog = false },
+                    onDismiss = { 
+                        showMoveDialog = false 
+                        selectedPhotos = emptySet()
+                    },
                     onMoveToFolder = { destFolderItem ->
                         val destFolder = File(destFolderItem.path)
                         var movedCount = 0
@@ -973,6 +994,7 @@ private fun FolderDetailScreen(
                         }
                         FeedbackHelper.show(context as Activity, "Moved $movedCount photo${if (movedCount == 1) "" else "s"} to ${destFolderItem.name}")
                         selectedPhotos = emptySet()
+                        previewPhoto = null
                         photos = FolderRepository.listPhotos(currentFolder)
                         showMoveDialog = false
                     }

@@ -1,58 +1,80 @@
 package com.group_a1.isocam.ui.theme
 
 import android.app.Activity
-import android.os.Build
+import android.content.Context
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
+enum class ThemeMode {
+    System,
+    LightCoconut,
+    DarkCoconut
+}
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
+object ThemeController {
+    private const val PREFS_NAME = "isocam_prefs"
+    private const val KEY_THEME_MODE = "theme_mode"
 
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
-)
+    var mode by mutableStateOf(ThemeMode.System)
+        private set
 
-@Composable
-fun IsocamTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    fun init(context: Context) {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val saved = prefs.getString(KEY_THEME_MODE, ThemeMode.System.name) ?: ThemeMode.System.name
+        mode = try {
+            ThemeMode.valueOf(saved)
+        } catch (_: Exception) {
+            ThemeMode.System
         }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    fun set(context: Context, newMode: ThemeMode) {
+        mode = newMode
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_THEME_MODE, newMode.name).apply()
+    }
+}
+
+@Composable
+fun IsoCamTheme(
+    mode: ThemeMode = ThemeController.mode,
+    content: @Composable () -> Unit
+) {
+    val darkTheme = when (mode) {
+        ThemeMode.System -> isSystemInDarkTheme()
+        ThemeMode.LightCoconut -> false
+        ThemeMode.DarkCoconut -> true
+    }
+
+    val colorScheme = if (darkTheme) DarkCoconutColorScheme else LightCoconutColorScheme
+    val extras = if (darkTheme) DarkCoconutExtras else LightCoconutExtras
+
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window
+            if (window != null) {
+                val insetsController = WindowCompat.getInsetsController(window, view)
+                insetsController.isAppearanceLightStatusBars = !darkTheme
+                insetsController.isAppearanceLightNavigationBars = !darkTheme
+            }
+        }
+    }
+
+    CompositionLocalProvider(LocalIsoCamExtras provides extras) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            shapes = Shapes,
+            typography = Typography,
+            content = content
+        )
+    }
 }

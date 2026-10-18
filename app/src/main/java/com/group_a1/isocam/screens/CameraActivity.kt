@@ -51,6 +51,7 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 class CameraActivity : ComponentActivity() {
 
@@ -720,19 +721,23 @@ class CameraActivity : ComponentActivity() {
         // swipe or tap background (excluding bottom bar) to close preview smoothly
         val previewGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                if (e1 != null && Math.abs(e1.x - e2.x) > 100) {
+                if (e1 != null && abs(e1.x - e2.x) > 100) {
                     closePreviewOverlay(root, previewOverlay)
                     return true
                 }
                 return false
             }
             override fun onSingleTapUp(e: MotionEvent): Boolean {
+                previewOverlay.performClick()
                 closePreviewOverlay(root, previewOverlay)
                 return true
             }
         })
 
-        previewOverlay.setOnTouchListener { _, event ->
+        previewOverlay.setOnTouchListener { view, event ->
+            if (event.action == MotionEvent.ACTION_UP) {
+                view.performClick()
+            }
             previewGestureDetector.onTouchEvent(event)
         }
 

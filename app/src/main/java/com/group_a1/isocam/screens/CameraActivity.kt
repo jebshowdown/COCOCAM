@@ -49,8 +49,10 @@ import com.group_a1.isocam.R
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 class CameraActivity : ComponentActivity() {
 
@@ -66,6 +68,8 @@ class CameraActivity : ComponentActivity() {
     private lateinit var rootLayout: FrameLayout
     private lateinit var sendButton: TextView
     private lateinit var zoomTextView: TextView
+    private lateinit var ringLightOverlay: View
+    private var activePreviewOverlay: View? = null
     
     private var isFrontCamera = false
     private var flashMode = ImageCapture.FLASH_MODE_OFF
@@ -96,6 +100,34 @@ class CameraActivity : ComponentActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
+        // Constant front-facing clean rounded soft-glow ring light overlay
+        val metrics = resources.displayMetrics
+        val radiusPx = minOf(metrics.widthPixels, metrics.heightPixels) * 0.8f
+
+        ringLightOverlay = View(this).apply {
+            val ringLightGradient = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 120f // Smooth rounded inner edges
+                gradientType = GradientDrawable.RADIAL_GRADIENT
+                colors = intArrayOf(
+                    Color.TRANSPARENT,
+                    Color.argb(40, 255, 255, 255),
+                    Color.argb(180, 255, 255, 255),
+                    Color.WHITE
+                )
+                setGradientCenter(0.5f, 0.5f)
+                gradientRadius = radiusPx
+            }
+            background = ringLightGradient
+            isClickable = false
+            isFocusable = false
+            visibility = View.GONE
+        }
+        rootLayout.addView(ringLightOverlay, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
         val scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 val currentZoomRatio = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f
@@ -109,6 +141,7 @@ class CameraActivity : ComponentActivity() {
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 isFrontCamera = !isFrontCamera
                 startCamera()
+                updateFrontRingLight()
                 return true
             }
         })
@@ -139,9 +172,15 @@ class CameraActivity : ComponentActivity() {
         }
         rootLayout.addView(backButton, backParams)
 
-        // System back button/gesture discards RAM queue immediately and exits
+        // System back button/gesture closes active preview overlay or discards RAM queue and exits
         onBackPressedDispatcher.addCallback(this) {
-            discardAndExit()
+            val overlay = activePreviewOverlay
+            if (overlay != null) {
+                val root = window.decorView.rootView as ViewGroup
+                closePreviewOverlay(root, overlay)
+            } else {
+                discardAndExit()
+            }
         }
 
         // 2. top-right queue thumbnail container
@@ -207,6 +246,7 @@ class CameraActivity : ComponentActivity() {
                 
                 imageCapture?.flashMode = flashMode
                 camera?.cameraControl?.enableTorch(isTorchOn)
+                updateFrontRingLight()
             }
         }
         val flashParams = FrameLayout.LayoutParams(
@@ -284,37 +324,36 @@ class CameraActivity : ComponentActivity() {
         // 3. snapchat-style circular ring drawable for capture button
         val ringDrawable = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(Color.TRANSPARENT)
-            setStroke(10, Color.WHITE)
-            alpha = 180
+            setColor(Color.argb(160, 0, 0, 0)) // Translucent dark background matching flip/flash/back buttons
+            setStroke(8, Color.WHITE) // Crisp outer white stroke
         }
 
         val captureButton = Button(this).apply {
             text = ""
             background = ringDrawable
             setOnClickListener { 
-                if (isFrontCamera && (flashMode == ImageCapture.FLASH_MODE_ON || flashMode == ImageCapture.FLASH_MODE_AUTO || isTorchOn)) {
-                    val overlay = View(this@CameraActivity).apply {
-                        val ringLightGradient = GradientDrawable().apply {
-                            shape = GradientDrawable.RECTANGLE
-                            gradientType = GradientDrawable.RADIAL_GRADIENT
-                            colors = intArrayOf(Color.TRANSPARENT, Color.argb(200, 255, 255, 255), Color.WHITE)
-                            setGradientCenter(0.5f, 0.5f)
-                            gradientRadius = resources.displayMetrics.widthPixels * 0.7f
+                val shouldFlash = isFrontCamera && !isTorchOn && (
+                    flashMode == ImageCapture.FLASH_MODE_ON || 
+                    (flashMode == ImageCapture.FLASH_MODE_AUTO && isLowLightEnvironment())
+                )
+
+                if (shouldFlash) {
+                    ringLightOverlay.visibility = View.VISIBLE
+                    ringLightOverlay.alpha = 0f
+                    ringLightOverlay.animate()
+                        .alpha(1f)
+                        .setDuration(150)
+                        .withEndAction {
+                            takePhoto()
+                            ringLightOverlay.animate()
+                                .alpha(0f)
+                                .setDuration(350)
+                                .withEndAction {
+                                    if (!isTorchOn) ringLightOverlay.visibility = View.GONE
+                                }
+                                .start()
                         }
-                        background = ringLightGradient
-                        alpha = 0f
-                    }
-                    rootLayout.addView(overlay, FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT, 
-                        FrameLayout.LayoutParams.MATCH_PARENT
-                    ))
-                    overlay.animate().alpha(1f).setDuration(200).withEndAction {
-                        takePhoto()
-                        overlay.animate().alpha(0f).setDuration(200).withEndAction {
-                            rootLayout.removeView(overlay)
-                        }.start()
-                    }.start()
+                        .start()
                 } else {
                     takePhoto() 
                 }
@@ -326,6 +365,8 @@ class CameraActivity : ComponentActivity() {
             bottomMargin = 100
         }
         rootLayout.addView(captureButton, buttonParams)
+        captureButton.elevation = 30f
+        captureButton.bringToFront()
 
         // 4. Send button (bottom right): saves RAM queue to target folder and navigates to folder
         sendButton = TextView(this).apply {
@@ -419,7 +460,23 @@ class CameraActivity : ComponentActivity() {
         baseContext, Manifest.permission.CAMERA
     ) == PackageManager.PERMISSION_GRANTED
 
+    private fun isLowLightEnvironment(): Boolean {
+        val calendar = Calendar.getInstance()
+        val hour = calendar.get(Calendar.HOUR_OF_DAY)
+        return hour < 7 || hour >= 19
+    }
+
+    private fun updateFrontRingLight() {
+        if (isFrontCamera && isTorchOn) {
+            ringLightOverlay.alpha = 1f
+            ringLightOverlay.visibility = View.VISIBLE
+        } else {
+            ringLightOverlay.visibility = View.GONE
+        }
+    }
+
     private fun startCamera() {
+        updateFrontRingLight()
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
         cameraProviderFuture.addListener({
@@ -571,6 +628,7 @@ class CameraActivity : ComponentActivity() {
     // full-screen preview with Google Photos style bottom action bar (Share, Move & Delete)
     private fun showFullscreenPreview(photoBytes: ByteArray) {
         val root = window.decorView.rootView as ViewGroup
+        var currentIndex = photoQueue.indexOf(photoBytes).coerceAtLeast(0)
 
         val previewOverlay = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -578,12 +636,24 @@ class CameraActivity : ComponentActivity() {
             scaleX = 0.85f
             scaleY = 0.85f
         }
+        activePreviewOverlay = previewOverlay
 
-        val bitmap = getRotatedBitmap(photoBytes)
         val fullImageView = ImageView(this).apply {
-            setImageBitmap(bitmap)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
+
+        fun updateCurrentPhotoDisplay() {
+            if (photoQueue.isEmpty()) {
+                closePreviewOverlay(root, previewOverlay)
+                return
+            }
+            currentIndex = currentIndex.coerceIn(0, photoQueue.size - 1)
+            val currentBytes = photoQueue[currentIndex]
+            val bitmap = getRotatedBitmap(currentBytes)
+            fullImageView.setImageBitmap(bitmap)
+        }
+
+        updateCurrentPhotoDisplay()
 
         previewOverlay.addView(fullImageView, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -649,29 +719,44 @@ class CameraActivity : ComponentActivity() {
 
         // 1. Share button
         val shareButton = createActionBtn(R.drawable.ic_share, getString(R.string.btn_share)) {
-            sharePhoto(photoBytes)
+            if (currentIndex in photoQueue.indices) {
+                sharePhoto(photoQueue[currentIndex])
+            }
         }
         
         // 2. Move button
         val moveButton = createActionBtn(R.drawable.ic_folder, "Move") {
-            FeedbackHelper.show(this, "Photo is still in RAM. Send to save first.")
+            if (currentIndex in photoQueue.indices) {
+                val targetBytes = photoQueue[currentIndex]
+                showMovePhotoFolderDialog(targetBytes) {
+                    if (photoQueue.isEmpty()) {
+                        closePreviewOverlay(root, previewOverlay)
+                    } else {
+                        updateCurrentPhotoDisplay()
+                    }
+                }
+            }
         }
         
         // 3. Delete button
         val deleteButton = createActionBtn(R.drawable.ic_delete, getString(R.string.btn_delete)) {
-            AlertDialog.Builder(this@CameraActivity)
-                .setTitle("Delete Photo")
-                .setMessage("Are you sure you want to remove this photo?")
-                .setPositiveButton("Delete") { _, _ ->
-                    val photoIndex = photoQueue.indexOf(photoBytes)
-                    if (photoIndex != -1) {
-                        photoQueue.removeAt(photoIndex)
+            if (currentIndex in photoQueue.indices) {
+                val targetBytes = photoQueue[currentIndex]
+                AlertDialog.Builder(this@CameraActivity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("Delete Photo")
+                    .setMessage("Are you sure you want to remove this photo?")
+                    .setPositiveButton("Yes") { _, _ ->
+                        photoQueue.remove(targetBytes)
                         updateQueuePreview()
+                        if (photoQueue.isEmpty()) {
+                            closePreviewOverlay(root, previewOverlay)
+                        } else {
+                            updateCurrentPhotoDisplay()
+                        }
                     }
-                    closePreviewOverlay(root, previewOverlay)
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
         }
         
         bottomBar.addView(shareButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -680,9 +765,45 @@ class CameraActivity : ComponentActivity() {
 
         previewOverlay.addView(bottomBar, bottomBarParams)
 
-        // tap background (excluding bottom bar) to close preview smoothly
-        previewOverlay.setOnClickListener {
-            closePreviewOverlay(root, previewOverlay)
+        var downX = 0f
+        var downY = 0f
+
+        previewOverlay.setOnTouchListener { view, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val deltaX = event.x - downX
+                    val deltaY = event.y - downY
+                    val absX = Math.abs(deltaX)
+                    val absY = Math.abs(deltaY)
+
+                    if (absX > absY && absX > 80) {
+                        if (deltaX < 0) {
+                            // Swipe Left -> Next photo in RAM queue
+                            if (currentIndex < photoQueue.size - 1) {
+                                currentIndex++
+                                updateCurrentPhotoDisplay()
+                            }
+                        } else {
+                            // Swipe Right -> Previous photo in RAM queue
+                            if (currentIndex > 0) {
+                                currentIndex--
+                                updateCurrentPhotoDisplay()
+                            }
+                        }
+                    } else if (absX < 30 && absY < 30) {
+                        // Tap -> dismiss preview
+                        view.performClick()
+                        closePreviewOverlay(root, previewOverlay)
+                    }
+                    true
+                }
+                else -> true
+            }
         }
 
         root.addView(previewOverlay, FrameLayout.LayoutParams(
@@ -701,7 +822,44 @@ class CameraActivity : ComponentActivity() {
             .start()
     }
 
+    private fun showMovePhotoFolderDialog(photoBytes: ByteArray, onMoved: () -> Unit) {
+        val folders = FolderRepository.listFolders(this)
+        if (folders.isEmpty()) {
+            FeedbackHelper.show(this, "No folders available to move photo.")
+            return
+        }
+
+        val folderNames = folders.map { it.name }.toTypedArray()
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Move Photo to Folder")
+            .setItems(folderNames) { dialog, which ->
+                val targetFolderItem = folders[which]
+                val targetFolder = File(targetFolderItem.path)
+                try {
+                    val photoFile = FolderRepository.newPhotoFile(targetFolder)
+                    val bitmap = getRotatedBitmap(photoBytes)
+                    FileOutputStream(photoFile).use { out ->
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    }
+                    photoQueue.remove(photoBytes)
+                    updateQueuePreview()
+                    FeedbackHelper.show(this, "Moved photo to ${targetFolderItem.name}")
+                    onMoved()
+                } catch (_: Exception) {
+                    FeedbackHelper.show(this, "Failed to move photo.")
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
+    }
+
     private fun closePreviewOverlay(root: ViewGroup, previewOverlay: View) {
+        if (activePreviewOverlay == previewOverlay) {
+            activePreviewOverlay = null
+        }
         previewOverlay.animate()
             .alpha(0f)
             .scaleX(0.85f)

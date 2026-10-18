@@ -1,8 +1,13 @@
 package com.group_a1.isocam
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfDocument
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -135,5 +140,102 @@ object FolderRepository {
     fun verifyPasscode(folder: File, input: String): Boolean {
         val code = loadSettings(folder).passcode
         return code != null && code == input
+    }
+
+    fun markFolderOpened(folder: File) {
+        try {
+            folder.setLastModified(System.currentTimeMillis())
+        } catch (_: Exception) {}
+    }
+
+    fun formatTimedDeletion(expirationDate: Long?): String? {
+        if (expirationDate == null) return null
+        val timeLeft = expirationDate - System.currentTimeMillis()
+        if (timeLeft <= 0) return "Expired"
+
+        val totalMinutes = timeLeft / (1000 * 60)
+        val totalHours = totalMinutes / 60
+        val days = totalHours / 24
+        val remainingHours = totalHours % 24
+        val remainingMinutes = totalMinutes % 60
+
+        return when {
+            days >= 1 -> {
+                if (remainingHours > 0) "Deletes in $days day${if (days == 1L) "" else "s"}, $remainingHours hr${if (remainingHours == 1L) "" else "s"}"
+                else "Deletes in $days day${if (days == 1L) "" else "s"}"
+            }
+            totalHours >= 1 -> {
+                if (remainingMinutes > 0) "Deletes in $totalHours hr${if (totalHours == 1L) "" else "s"}, $remainingMinutes min${if (remainingMinutes == 1L) "" else "s"}"
+                else "Deletes in $totalHours hr${if (totalHours == 1L) "" else "s"}"
+            }
+            totalMinutes >= 1 -> "Deletes in $totalMinutes min${if (totalMinutes == 1L) "" else "s"}"
+            else -> "Deletes in <1 min"
+        }
+    }
+
+    fun exportFolderToPdf(context: Context, folder: File): File? {
+        return exportPhotosToPdf(context, listPhotos(folder), folder.name)
+    }
+
+    fun exportPhotosToPdf(context: Context, photos: List<File>, pdfName: String): File? {
+        if (photos.isEmpty()) return null
+
+        val pdfDocument = PdfDocument()
+        try {
+            photos.forEachIndexed { index, photoFile ->
+                // First pass: decode dimensions to downsample efficiently
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(photoFile.absolutePath, options)
+                val origW = options.outWidth
+                val origH = options.outHeight
+                if (origW <= 0 || origH <= 0) return@forEachIndexed
+
+                // Cap max dimension to 960px for lightweight multi-page PDFs
+                val maxDim = 960f
+                val scale = minOf(1f, maxDim / maxOf(origW, origH))
+                val targetW = (origW * scale).toInt().coerceAtLeast(1)
+                val targetH = (origH * scale).toInt().coerceAtLeast(1)
+
+                var sampleSize = 1
+                while (origW / (sampleSize * 2) >= targetW && origH / (sampleSize * 2) >= targetH) {
+                    sampleSize *= 2
+                }
+
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+
+                val rawBitmap = BitmapFactory.decodeFile(photoFile.absolutePath, decodeOptions) ?: return@forEachIndexed
+                val scaledBitmap = Bitmap.createScaledBitmap(rawBitmap, targetW, targetH, true)
+                if (scaledBitmap != rawBitmap) {
+                    rawBitmap.recycle()
+                }
+
+                // Compress to 60% JPEG byte stream for Crowdmark limits
+                val stream = ByteArrayOutputStream()
+                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream)
+                val compressedBytes = stream.toByteArray()
+                val finalBitmap = BitmapFactory.decodeByteArray(compressedBytes, 0, compressedBytes.size)
+
+                val pageInfo = PdfDocument.PageInfo.Builder(targetW, targetH, index + 1).create()
+                val page = pdfDocument.startPage(pageInfo)
+                page.canvas.drawBitmap(finalBitmap, 0f, 0f, null)
+                pdfDocument.finishPage(page)
+
+                scaledBitmap.recycle()
+                finalBitmap.recycle()
+            }
+            val exportDir = File(context.cacheDir, "exports").also { it.mkdirs() }
+            val exportFile = File(exportDir, "$pdfName.pdf")
+            FileOutputStream(exportFile).use { out ->
+                pdfDocument.writeTo(out)
+            }
+            return exportFile
+        } catch (_: Exception) {
+            return null
+        } finally {
+            pdfDocument.close()
+        }
     }
 }

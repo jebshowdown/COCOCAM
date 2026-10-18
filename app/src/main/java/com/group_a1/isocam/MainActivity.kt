@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Share
@@ -48,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -203,6 +205,10 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
     var selectedFolders by remember { mutableStateOf(setOf<FolderItem>()) }
     var showDialog by remember { mutableStateOf(false) }
     var folderToUnlock by remember { mutableStateOf<FolderItem?>(null) }
+    var folderToRename by remember { mutableStateOf<FolderItem?>(null) }
+    var folderToLock by remember { mutableStateOf<FolderItem?>(null) }
+    var folderToUpdatePasscode by remember { mutableStateOf<FolderItem?>(null) }
+    var folderToRemovePasscode by remember { mutableStateOf<FolderItem?>(null) }
     var sortOption by remember { mutableStateOf(SortOption.NameAsc) }
     var folderMenuTarget by remember { mutableStateOf<FolderItem?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -230,62 +236,37 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
     val bottomPadding = paddingValues.calculateBottomPadding()
     val rainbow = LocalIsoCamExtras.current.rainbow
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (selectedFolders.isNotEmpty()) {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                navigationIcon = {
-                    IconButton(onClick = { selectedFolders = emptySet() }) {
-                        Icon(Icons.Default.Close, contentDescription = "Clear selection")
+    fun exportPhotos(folder: FolderItem) {
+        try {
+            val uris = ArrayList<Uri>()
+            FolderRepository.listPhotos(File(folder.path)).forEach { photoFile ->
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    photoFile
+                )
+                uris.add(uri)
+            }
+            if (uris.isNotEmpty()) {
+                val intent = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
+                    type = "image/jpeg"
+                    if (uris.size == 1) {
+                        putExtra(Intent.EXTRA_STREAM, uris[0])
+                    } else {
+                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
                     }
-                },
-                title = {
-                    Text("${selectedFolders.size} selected", style = MaterialTheme.typography.titleMedium)
-                },
-                actions = {
-                    IconButton(onClick = {
-                        try {
-                            val uris = ArrayList<Uri>()
-                            // Order by sortOption
-                            val sortedSelected = sortedFolders.filter { it in selectedFolders }
-                            sortedSelected.forEach { folder ->
-                                FolderRepository.listPhotos(File(folder.path)).forEach { photoFile ->
-                                    val uri = FileProvider.getUriForFile(
-                                        context,
-                                        "${context.packageName}.fileprovider",
-                                        photoFile
-                                    )
-                                    uris.add(uri)
-                                }
-                            }
-                            if (uris.isNotEmpty()) {
-                                val intent = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
-                                    type = "image/jpeg"
-                                    if (uris.size == 1) {
-                                        putExtra(Intent.EXTRA_STREAM, uris[0])
-                                    } else {
-                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                                    }
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Share Photos"))
-                            } else {
-                                Toast.makeText(context, "No photos to share", Toast.LENGTH_SHORT).show()
-                            }
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Failed to share", Toast.LENGTH_SHORT).show()
-                        }
-                    }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share selected")
-                    }
-                    IconButton(onClick = { showDeleteConfirmDialog = true }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete selected")
-                    }
-                },
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = topPadding)
-            )
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Export Photos"))
+            } else {
+                Toast.makeText(context, "No photos to export", Toast.LENGTH_SHORT).show()
+            }
+        } catch (_: Exception) {
+            Toast.makeText(context, "Failed to export", Toast.LENGTH_SHORT).show()
         }
+    }
 
+    Box(modifier = Modifier.fillMaxSize()) {
         if (folders.isEmpty()) {
             Column(
                 modifier = Modifier
@@ -338,6 +319,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                             HeroFolderCard(
                                 folder = hero,
                                 isSelected = isSelected,
+                                isMenuExpanded = folderMenuTarget?.path == hero.path,
                                 onLongClick = {
                                     selectedFolders = if (isSelected) selectedFolders - hero else selectedFolders + hero
                                 },
@@ -348,7 +330,33 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                                         openFolder(context, hero) { folderToUnlock = hero }
                                     }
                                 },
-                                onMenuClick = { folderMenuTarget = hero }
+                                onMenuClick = { folderMenuTarget = hero },
+                                onDismissMenu = { folderMenuTarget = null },
+                                onRename = {
+                                    folderMenuTarget = null
+                                    folderToRename = hero
+                                },
+                                onLock = {
+                                    folderMenuTarget = null
+                                    folderToLock = hero
+                                },
+                                onUpdatePasscode = {
+                                    folderMenuTarget = null
+                                    folderToUpdatePasscode = hero
+                                },
+                                onRemovePasscode = {
+                                    folderMenuTarget = null
+                                    folderToRemovePasscode = hero
+                                },
+                                onExport = {
+                                    folderMenuTarget = null
+                                    exportPhotos(hero)
+                                },
+                                onDelete = {
+                                    folderMenuTarget = null
+                                    selectedFolders = setOf(hero)
+                                    showDeleteConfirmDialog = true
+                                }
                             )
                         }
                     }
@@ -372,6 +380,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                                     RecentFolderCard(
                                         folder = folder,
                                         isSelected = isSelected,
+                                        isMenuExpanded = folderMenuTarget?.path == folder.path,
                                         onLongClick = {
                                             selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
                                         },
@@ -382,7 +391,33 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                                                 openFolder(context, folder) { folderToUnlock = folder }
                                             }
                                         },
-                                        onMenuClick = { folderMenuTarget = folder }
+                                        onMenuClick = { folderMenuTarget = folder },
+                                        onDismissMenu = { folderMenuTarget = null },
+                                        onRename = {
+                                            folderMenuTarget = null
+                                            folderToRename = folder
+                                        },
+                                        onLock = {
+                                            folderMenuTarget = null
+                                            folderToLock = folder
+                                        },
+                                        onUpdatePasscode = {
+                                            folderMenuTarget = null
+                                            folderToUpdatePasscode = folder
+                                        },
+                                        onRemovePasscode = {
+                                            folderMenuTarget = null
+                                            folderToRemovePasscode = folder
+                                        },
+                                        onExport = {
+                                            folderMenuTarget = null
+                                            exportPhotos(folder)
+                                        },
+                                        onDelete = {
+                                            folderMenuTarget = null
+                                            selectedFolders = setOf(folder)
+                                            showDeleteConfirmDialog = true
+                                        }
                                     )
                                 }
                             }
@@ -406,6 +441,7 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                         FolderRow(
                             folder = folder,
                             isSelected = isSelected,
+                            isMenuExpanded = folderMenuTarget?.path == folder.path,
                             onLongClick = {
                                 selectedFolders = if (isSelected) selectedFolders - folder else selectedFolders + folder
                             },
@@ -416,11 +452,95 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                                     openFolder(context, folder) { folderToUnlock = folder }
                                 }
                             },
-                            onMenuClick = { folderMenuTarget = folder }
+                            onMenuClick = { folderMenuTarget = folder },
+                            onDismissMenu = { folderMenuTarget = null },
+                            onRename = {
+                                folderMenuTarget = null
+                                folderToRename = folder
+                            },
+                            onLock = {
+                                folderMenuTarget = null
+                                folderToLock = folder
+                            },
+                            onUpdatePasscode = {
+                                folderMenuTarget = null
+                                folderToUpdatePasscode = folder
+                            },
+                            onRemovePasscode = {
+                                folderMenuTarget = null
+                                folderToRemovePasscode = folder
+                            },
+                            onExport = {
+                                folderMenuTarget = null
+                                exportPhotos(folder)
+                            },
+                            onDelete = {
+                                folderMenuTarget = null
+                                selectedFolders = setOf(folder)
+                                showDeleteConfirmDialog = true
+                            }
                         )
                     }
                 }
             }
+        }
+
+        // Batch Action Contextual Top Bar (Highest elevation zIndex above everything)
+        if (selectedFolders.isNotEmpty()) {
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                navigationIcon = {
+                    IconButton(onClick = { selectedFolders = emptySet() }) {
+                        Icon(Icons.Default.Close, contentDescription = "Clear selection")
+                    }
+                },
+                title = {
+                    Text("${selectedFolders.size} selected", style = MaterialTheme.typography.titleMedium)
+                },
+                actions = {
+                    IconButton(onClick = {
+                        try {
+                            val uris = ArrayList<Uri>()
+                            val sortedSelected = sortedFolders.filter { it in selectedFolders }
+                            sortedSelected.forEach { folder ->
+                                FolderRepository.listPhotos(File(folder.path)).forEach { photoFile ->
+                                    val uri = FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        photoFile
+                                    )
+                                    uris.add(uri)
+                                }
+                            }
+                            if (uris.isNotEmpty()) {
+                                val intent = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
+                                    type = "image/jpeg"
+                                    if (uris.size == 1) {
+                                        putExtra(Intent.EXTRA_STREAM, uris[0])
+                                    } else {
+                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                                    }
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Share Photos"))
+                            } else {
+                                Toast.makeText(context, "No photos to share", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (_: Exception) {
+                            Toast.makeText(context, "Failed to share", Toast.LENGTH_SHORT).show()
+                        }
+                    }) {
+                        Icon(Icons.Default.Share, contentDescription = "Share selected")
+                    }
+                    IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete selected")
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = topPadding)
+                    .zIndex(10f)
+            )
         }
 
         val fabBrush = if (rainbow.isNotEmpty()) {
@@ -475,6 +595,74 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
             )
         }
 
+        folderToRename?.let { folder ->
+            RenameFolderDialog(
+                folderName = folder.name,
+                onDismiss = { folderToRename = null },
+                onRename = { newName ->
+                    when (val result = FolderRepository.renameFolder(context, folder.name, newName)) {
+                        is CreateResult.Success -> {
+                            reload()
+                            folderToRename = null
+                            null
+                        }
+                        is CreateResult.Error -> result.message
+                    }
+                }
+            )
+        }
+
+        folderToLock?.let { folder ->
+            SetLockPasscodeDialog(
+                folderName = folder.name,
+                onDismiss = { folderToLock = null },
+                onSetPasscode = { passcode ->
+                    FolderRepository.setPasscode(File(folder.path), passcode)
+                    Toast.makeText(context, "Folder locked", Toast.LENGTH_SHORT).show()
+                    reload()
+                    folderToLock = null
+                }
+            )
+        }
+
+        folderToUpdatePasscode?.let { folder ->
+            UpdatePasscodeDialog(
+                folderName = folder.name,
+                onDismiss = { folderToUpdatePasscode = null },
+                onUpdatePasscode = { oldCode, newCode ->
+                    val folderFile = File(folder.path)
+                    if (!FolderRepository.verifyPasscode(folderFile, oldCode)) {
+                        false
+                    } else {
+                        FolderRepository.setPasscode(folderFile, newCode)
+                        Toast.makeText(context, "Passcode updated", Toast.LENGTH_SHORT).show()
+                        reload()
+                        folderToUpdatePasscode = null
+                        true
+                    }
+                }
+            )
+        }
+
+        folderToRemovePasscode?.let { folder ->
+            RemovePasscodeDialog(
+                folderName = folder.name,
+                onDismiss = { folderToRemovePasscode = null },
+                onRemovePasscode = { passcode ->
+                    val folderFile = File(folder.path)
+                    if (!FolderRepository.verifyPasscode(folderFile, passcode)) {
+                        false
+                    } else {
+                        FolderRepository.setPasscode(folderFile, "")
+                        Toast.makeText(context, "Passcode removed", Toast.LENGTH_SHORT).show()
+                        reload()
+                        folderToRemovePasscode = null
+                        true
+                    }
+                }
+            )
+        }
+
         folderToUnlock?.let { folder ->
             UnlockFolderDialog(
                 folderName = folder.name,
@@ -490,89 +678,6 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
                     }
                 }
             )
-        }
-
-        folderMenuTarget?.let { folder ->
-            DropdownMenu(
-                expanded = true,
-                onDismissRequest = { folderMenuTarget = null },
-                shape = MaterialTheme.shapes.extraLarge,
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Rename") },
-                    onClick = {
-                        FolderDetailActivity.start(context, folder.path)
-                        folderMenuTarget = null
-                    }
-                )
-                if (folder.isLocked) {
-                    DropdownMenuItem(
-                        text = { Text("Update Passcode") },
-                        onClick = {
-                            FolderDetailActivity.start(context, folder.path)
-                            folderMenuTarget = null
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Remove Passcode") },
-                        onClick = {
-                            FolderRepository.setPasscode(File(folder.path), "")
-                            reload()
-                            folderMenuTarget = null
-                        }
-                    )
-                } else {
-                    DropdownMenuItem(
-                        text = { Text("Lock Folder") },
-                        onClick = {
-                            FolderDetailActivity.start(context, folder.path)
-                            folderMenuTarget = null
-                        }
-                    )
-                }
-                DropdownMenuItem(
-                    text = { Text("Export Photos") },
-                    onClick = {
-                        try {
-                            val uris = ArrayList<Uri>()
-                            FolderRepository.listPhotos(File(folder.path)).forEach { photoFile ->
-                                val uri = FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.fileprovider",
-                                    photoFile
-                                )
-                                uris.add(uri)
-                            }
-                            if (uris.isNotEmpty()) {
-                                val intent = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
-                                    type = "image/jpeg"
-                                    if (uris.size == 1) {
-                                        putExtra(Intent.EXTRA_STREAM, uris[0])
-                                    } else {
-                                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                                    }
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Export Photos"))
-                            } else {
-                                Toast.makeText(context, "No photos to export", Toast.LENGTH_SHORT).show()
-                            }
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Failed to export", Toast.LENGTH_SHORT).show()
-                        }
-                        folderMenuTarget = null
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                    onClick = {
-                        selectedFolders = setOf(folder)
-                        showDeleteConfirmDialog = true
-                        folderMenuTarget = null
-                    }
-                )
-            }
         }
 
         if (showDeleteConfirmDialog) {
@@ -603,16 +708,78 @@ private fun FoldersScreen(refreshTick: Int, paddingValues: PaddingValues) {
 }
 
 private fun openFolder(context: Context, folder: FolderItem, onLocked: () -> Unit) {
-    if (folder.isLocked) {
+    if (FolderRepository.isLocked(File(folder.path))) {
         onLocked()
     } else {
         FolderDetailActivity.start(context, folder.path)
     }
 }
 
+@Composable
+private fun FolderOptionsMenu(
+    folder: FolderItem,
+    isExpanded: Boolean,
+    onDismiss: () -> Unit,
+    onRename: () -> Unit,
+    onLock: () -> Unit,
+    onUpdatePasscode: () -> Unit,
+    onRemovePasscode: () -> Unit,
+    onExport: () -> Unit,
+    onDelete: () -> Unit
+) {
+    DropdownMenu(
+        expanded = isExpanded,
+        onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        DropdownMenuItem(
+            text = { Text("Rename") },
+            onClick = onRename
+        )
+        if (folder.isLocked) {
+            DropdownMenuItem(
+                text = { Text("Update Passcode") },
+                onClick = onUpdatePasscode
+            )
+            DropdownMenuItem(
+                text = { Text("Remove Passcode") },
+                onClick = onRemovePasscode
+            )
+        } else {
+            DropdownMenuItem(
+                text = { Text("Lock Folder") },
+                onClick = onLock
+            )
+        }
+        DropdownMenuItem(
+            text = { Text("Export Photos") },
+            onClick = onExport
+        )
+        DropdownMenuItem(
+            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+            onClick = onDelete
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun HeroFolderCard(folder: FolderItem, onLongClick: () -> Unit, onClick: () -> Unit, onMenuClick: () -> Unit, isSelected: Boolean) {
+private fun HeroFolderCard(
+    folder: FolderItem,
+    isSelected: Boolean,
+    isMenuExpanded: Boolean,
+    onLongClick: () -> Unit,
+    onClick: () -> Unit,
+    onMenuClick: () -> Unit,
+    onDismissMenu: () -> Unit,
+    onRename: () -> Unit,
+    onLock: () -> Unit,
+    onUpdatePasscode: () -> Unit,
+    onRemovePasscode: () -> Unit,
+    onExport: () -> Unit,
+    onDelete: () -> Unit
+) {
     val glowColor = LocalIsoCamExtras.current.glow
     val rainbow = LocalIsoCamExtras.current.rainbow
 
@@ -674,8 +841,21 @@ private fun HeroFolderCard(folder: FolderItem, onLongClick: () -> Unit, onClick:
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(onClick = onMenuClick) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                    Box {
+                        IconButton(onClick = onMenuClick) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                        }
+                        FolderOptionsMenu(
+                            folder = folder,
+                            isExpanded = isMenuExpanded,
+                            onDismiss = onDismissMenu,
+                            onRename = onRename,
+                            onLock = onLock,
+                            onUpdatePasscode = onUpdatePasscode,
+                            onRemovePasscode = onRemovePasscode,
+                            onExport = onExport,
+                            onDelete = onDelete
+                        )
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -714,7 +894,21 @@ private fun HeroFolderCard(folder: FolderItem, onLongClick: () -> Unit, onClick:
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecentFolderCard(folder: FolderItem, onLongClick: () -> Unit, onClick: () -> Unit, onMenuClick: () -> Unit, isSelected: Boolean) {
+private fun RecentFolderCard(
+    folder: FolderItem,
+    isSelected: Boolean,
+    isMenuExpanded: Boolean,
+    onLongClick: () -> Unit,
+    onClick: () -> Unit,
+    onMenuClick: () -> Unit,
+    onDismissMenu: () -> Unit,
+    onRename: () -> Unit,
+    onLock: () -> Unit,
+    onUpdatePasscode: () -> Unit,
+    onRemovePasscode: () -> Unit,
+    onExport: () -> Unit,
+    onDelete: () -> Unit
+) {
     PressableCard(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -741,8 +935,21 @@ private fun RecentFolderCard(folder: FolderItem, onLongClick: () -> Unit, onClic
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
-                IconButton(onClick = onMenuClick, modifier = Modifier.size(24.dp)) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "More options", modifier = Modifier.size(20.dp))
+                Box {
+                    IconButton(onClick = onMenuClick, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More options", modifier = Modifier.size(20.dp))
+                    }
+                    FolderOptionsMenu(
+                        folder = folder,
+                        isExpanded = isMenuExpanded,
+                        onDismiss = onDismissMenu,
+                        onRename = onRename,
+                        onLock = onLock,
+                        onUpdatePasscode = onUpdatePasscode,
+                        onRemovePasscode = onRemovePasscode,
+                        onExport = onExport,
+                        onDelete = onDelete
+                    )
                 }
             }
             Text(
@@ -763,7 +970,21 @@ private fun RecentFolderCard(folder: FolderItem, onLongClick: () -> Unit, onClic
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FolderRow(folder: FolderItem, onLongClick: () -> Unit, onClick: () -> Unit, onMenuClick: () -> Unit, isSelected: Boolean) {
+private fun FolderRow(
+    folder: FolderItem,
+    isSelected: Boolean,
+    isMenuExpanded: Boolean,
+    onLongClick: () -> Unit,
+    onClick: () -> Unit,
+    onMenuClick: () -> Unit,
+    onDismissMenu: () -> Unit,
+    onRename: () -> Unit,
+    onLock: () -> Unit,
+    onUpdatePasscode: () -> Unit,
+    onRemovePasscode: () -> Unit,
+    onExport: () -> Unit,
+    onDelete: () -> Unit
+) {
     PressableCard(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -823,8 +1044,21 @@ private fun FolderRow(folder: FolderItem, onLongClick: () -> Unit, onClick: () -
                     }
                 }
             }
-            IconButton(onClick = onMenuClick) {
-                Icon(Icons.Default.MoreVert, contentDescription = "More options")
+            Box {
+                IconButton(onClick = onMenuClick) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                }
+                FolderOptionsMenu(
+                    folder = folder,
+                    isExpanded = isMenuExpanded,
+                    onDismiss = onDismissMenu,
+                    onRename = onRename,
+                    onLock = onLock,
+                    onUpdatePasscode = onUpdatePasscode,
+                    onRemovePasscode = onRemovePasscode,
+                    onExport = onExport,
+                    onDelete = onDelete
+                )
             }
         }
     }
@@ -840,7 +1074,6 @@ enum class SortOption(val label: String) {
 @Composable
 private fun ScreenHeader(title: String) {
     val rainbow = LocalIsoCamExtras.current.rainbow
-    var sortMenuExpanded by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
@@ -904,7 +1137,15 @@ private fun SectionHeader(
         if (sortOption != null && onSortChanged != null) {
             Box {
                 TextButton(onClick = { sortMenuExpanded = true }) {
-                    Text("Sort by", style = MaterialTheme.typography.labelLarge)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Sort by", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = "Sort options",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
                 DropdownMenu(
                     expanded = sortMenuExpanded,
@@ -1106,6 +1347,149 @@ private fun PressableCard(
 }
 
 @Composable
+private fun RenameFolderDialog(
+    folderName: String,
+    onDismiss: () -> Unit,
+    onRename: (String) -> String?
+) {
+    var name by remember { mutableStateOf(folderName) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Rename Folder") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it; error = null },
+                label = { Text("Folder Name") },
+                singleLine = true,
+                isError = error != null,
+                supportingText = error?.let { msg -> { Text(msg) } },
+            )
+        },
+        confirmButton = { TextButton(onClick = { error = onRename(name) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun UpdatePasscodeDialog(
+    folderName: String,
+    onDismiss: () -> Unit,
+    onUpdatePasscode: (String, String) -> Boolean
+) {
+    var oldPasscode by remember { mutableStateOf("") }
+    var newPasscode by remember { mutableStateOf("") }
+    var confirmPasscode by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Update Passcode for: $folderName") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = oldPasscode,
+                    onValueChange = { oldPasscode = it; error = null },
+                    label = { Text("Old Passcode") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                OutlinedTextField(
+                    value = newPasscode,
+                    onValueChange = { newPasscode = it; error = null },
+                    label = { Text("New Passcode") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                OutlinedTextField(
+                    value = confirmPasscode,
+                    onValueChange = { confirmPasscode = it; error = null },
+                    label = { Text("Confirm New Passcode") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    isError = error != null,
+                    supportingText = error?.let { msg -> { Text(msg) } }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (oldPasscode.isBlank()) {
+                        error = "Old passcode required"
+                    } else if (newPasscode.isBlank()) {
+                        error = "New passcode cannot be empty"
+                    } else if (newPasscode != confirmPasscode) {
+                        error = "New passcodes do not match"
+                    } else if (!onUpdatePasscode(oldPasscode, newPasscode)) {
+                        error = "Incorrect old passcode"
+                    }
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun RemovePasscodeDialog(
+    folderName: String,
+    onDismiss: () -> Unit,
+    onRemovePasscode: (String) -> Boolean
+) {
+    var passcode by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Remove Passcode for: $folderName") },
+        text = {
+            OutlinedTextField(
+                value = passcode,
+                onValueChange = { passcode = it; error = null },
+                label = { Text("Current Passcode") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                isError = error != null,
+                supportingText = error?.let { msg -> { Text(msg) } }
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (passcode.isBlank()) {
+                        error = "Passcode required"
+                    } else if (!onRemovePasscode(passcode)) {
+                        error = "Incorrect passcode"
+                    }
+                }
+            ) {
+                Text("Verify & Clear")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
 private fun UnlockFolderDialog(
     folderName: String,
     onDismiss: () -> Unit,
@@ -1130,6 +1514,64 @@ private fun UnlockFolderDialog(
         confirmButton = {
             TextButton(onClick = { onUnlock(passcode) }) {
                 Text("Unlock")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun SetLockPasscodeDialog(
+    folderName: String,
+    onDismiss: () -> Unit,
+    onSetPasscode: (String) -> Unit
+) {
+    var passcode by remember { mutableStateOf("") }
+    var confirmPasscode by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Lock Folder: $folderName") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = passcode,
+                    onValueChange = { passcode = it; error = null },
+                    label = { Text("Set Passcode") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                OutlinedTextField(
+                    value = confirmPasscode,
+                    onValueChange = { confirmPasscode = it; error = null },
+                    label = { Text("Confirm Passcode") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    isError = error != null,
+                    supportingText = error?.let { msg -> { Text(msg) } }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (passcode.isBlank()) {
+                        error = "Passcode cannot be empty"
+                    } else if (passcode != confirmPasscode) {
+                        error = "Passcodes do not match"
+                    } else {
+                        onSetPasscode(passcode)
+                    }
+                }
+            ) {
+                Text("Lock")
             }
         },
         dismissButton = {

@@ -66,6 +66,8 @@ class CameraActivity : ComponentActivity() {
     private lateinit var rootLayout: FrameLayout
     private lateinit var sendButton: TextView
     private lateinit var zoomTextView: TextView
+    private lateinit var ringLightOverlay: View
+    private var activePreviewOverlay: View? = null
     
     private var isFrontCamera = false
     private var flashMode = ImageCapture.FLASH_MODE_OFF
@@ -96,6 +98,21 @@ class CameraActivity : ComponentActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
+        // Constant front-facing bright white ring light overlay
+        ringLightOverlay = View(this).apply {
+            val ringLightGradient = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(Color.TRANSPARENT)
+                setStroke(120, Color.WHITE) // Constant bright white ring light frame
+            }
+            background = ringLightGradient
+            visibility = View.GONE
+        }
+        rootLayout.addView(ringLightOverlay, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
         val scaleGestureDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 val currentZoomRatio = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f
@@ -109,6 +126,7 @@ class CameraActivity : ComponentActivity() {
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 isFrontCamera = !isFrontCamera
                 startCamera()
+                updateFrontRingLight()
                 return true
             }
         })
@@ -139,9 +157,15 @@ class CameraActivity : ComponentActivity() {
         }
         rootLayout.addView(backButton, backParams)
 
-        // System back button/gesture discards RAM queue immediately and exits
+        // System back button/gesture closes active preview overlay or discards RAM queue and exits
         onBackPressedDispatcher.addCallback(this) {
-            discardAndExit()
+            val overlay = activePreviewOverlay
+            if (overlay != null) {
+                val root = window.decorView.rootView as ViewGroup
+                closePreviewOverlay(root, overlay)
+            } else {
+                discardAndExit()
+            }
         }
 
         // 2. top-right queue thumbnail container
@@ -207,6 +231,7 @@ class CameraActivity : ComponentActivity() {
                 
                 imageCapture?.flashMode = flashMode
                 camera?.cameraControl?.enableTorch(isTorchOn)
+                updateFrontRingLight()
             }
         }
         val flashParams = FrameLayout.LayoutParams(
@@ -419,7 +444,16 @@ class CameraActivity : ComponentActivity() {
         baseContext, Manifest.permission.CAMERA
     ) == PackageManager.PERMISSION_GRANTED
 
+    private fun updateFrontRingLight() {
+        if (isFrontCamera && (isTorchOn || flashMode == ImageCapture.FLASH_MODE_ON)) {
+            ringLightOverlay.visibility = View.VISIBLE
+        } else {
+            ringLightOverlay.visibility = View.GONE
+        }
+    }
+
     private fun startCamera() {
+        updateFrontRingLight()
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
         cameraProviderFuture.addListener({
@@ -578,6 +612,7 @@ class CameraActivity : ComponentActivity() {
             scaleX = 0.85f
             scaleY = 0.85f
         }
+        activePreviewOverlay = previewOverlay
 
         val bitmap = getRotatedBitmap(photoBytes)
         val fullImageView = ImageView(this).apply {
@@ -654,15 +689,17 @@ class CameraActivity : ComponentActivity() {
         
         // 2. Move button
         val moveButton = createActionBtn(R.drawable.ic_folder, "Move") {
-            FeedbackHelper.show(this, "Photo is still in RAM. Send to save first.")
+            showMovePhotoFolderDialog(photoBytes) {
+                closePreviewOverlay(root, previewOverlay)
+            }
         }
         
         // 3. Delete button
         val deleteButton = createActionBtn(R.drawable.ic_delete, getString(R.string.btn_delete)) {
-            AlertDialog.Builder(this@CameraActivity)
+            AlertDialog.Builder(this@CameraActivity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Delete Photo")
                 .setMessage("Are you sure you want to remove this photo?")
-                .setPositiveButton("Delete") { _, _ ->
+                .setPositiveButton("Yes") { _, _ ->
                     val photoIndex = photoQueue.indexOf(photoBytes)
                     if (photoIndex != -1) {
                         photoQueue.removeAt(photoIndex)
@@ -680,9 +717,23 @@ class CameraActivity : ComponentActivity() {
 
         previewOverlay.addView(bottomBar, bottomBarParams)
 
-        // tap background (excluding bottom bar) to close preview smoothly
-        previewOverlay.setOnClickListener {
-            closePreviewOverlay(root, previewOverlay)
+        // swipe or tap background (excluding bottom bar) to close preview smoothly
+        val previewGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                if (e1 != null && Math.abs(e1.x - e2.x) > 100) {
+                    closePreviewOverlay(root, previewOverlay)
+                    return true
+                }
+                return false
+            }
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                closePreviewOverlay(root, previewOverlay)
+                return true
+            }
+        })
+
+        previewOverlay.setOnTouchListener { _, event ->
+            previewGestureDetector.onTouchEvent(event)
         }
 
         root.addView(previewOverlay, FrameLayout.LayoutParams(
@@ -701,7 +752,44 @@ class CameraActivity : ComponentActivity() {
             .start()
     }
 
+    private fun showMovePhotoFolderDialog(photoBytes: ByteArray, onMoved: () -> Unit) {
+        val folders = FolderRepository.listFolders(this)
+        if (folders.isEmpty()) {
+            FeedbackHelper.show(this, "No folders available to move photo.")
+            return
+        }
+
+        val folderNames = folders.map { it.name }.toTypedArray()
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Move Photo to Folder")
+            .setItems(folderNames) { dialog, which ->
+                val targetFolderItem = folders[which]
+                val targetFolder = File(targetFolderItem.path)
+                try {
+                    val photoFile = FolderRepository.newPhotoFile(targetFolder)
+                    val bitmap = getRotatedBitmap(photoBytes)
+                    FileOutputStream(photoFile).use { out ->
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    }
+                    photoQueue.remove(photoBytes)
+                    updateQueuePreview()
+                    FeedbackHelper.show(this, "Moved photo to ${targetFolderItem.name}")
+                    onMoved()
+                } catch (_: Exception) {
+                    FeedbackHelper.show(this, "Failed to move photo.")
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
+    }
+
     private fun closePreviewOverlay(root: ViewGroup, previewOverlay: View) {
+        if (activePreviewOverlay == previewOverlay) {
+            activePreviewOverlay = null
+        }
         previewOverlay.animate()
             .alpha(0f)
             .scaleX(0.85f)

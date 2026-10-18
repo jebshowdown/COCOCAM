@@ -66,10 +66,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.group_a1.isocam.screens.CameraActivity
@@ -122,6 +124,7 @@ class FolderDetailActivity : ComponentActivity() {
 
         setContent {
             IsoCamTheme {
+                var isUnlocked by remember { mutableStateOf(!FolderRepository.isLocked(folder)) }
                 var showCleanupDialog by remember { mutableStateOf(false) }
 
                 LaunchedEffect(pendingImportUris) {
@@ -130,61 +133,77 @@ class FolderDetailActivity : ComponentActivity() {
                     }
                 }
 
-                if (showCleanupDialog) {
-                    AlertDialog(
-                        onDismissRequest = { 
-                            showCleanupDialog = false
-                            pendingImportUris = null
-                        },
-                        title = { Text("Delete Original Photos?") },
-                        text = { Text("The photos have been imported. Do you want to delete the originals from your gallery to save space?") },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                pendingImportUris?.let { uris ->
-                                    try {
-                                        var deletedCount = 0
-                                        uris.forEach { uri ->
-                                            contentResolver.delete(uri, null, null)
-                                            deletedCount++
-                                        }
-                                        FeedbackHelper.show(this@FolderDetailActivity, "Deleted $deletedCount original photo${if (deletedCount == 1) "" else "s"}")
-                                    } catch (e: SecurityException) {
-                                        FeedbackHelper.show(this@FolderDetailActivity, "Failed to delete: Permission denied")
-                                    } catch (e: Exception) {
-                                        FeedbackHelper.show(this@FolderDetailActivity, "Failed to delete originals")
-                                    }
-                                }
-                                showCleanupDialog = false
-                                pendingImportUris = null
-                            }) {
-                                Text("Delete")
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { 
-                                showCleanupDialog = false 
-                                pendingImportUris = null
-                            }) {
-                                Text("Keep")
+                if (!isUnlocked) {
+                    UnlockFolderDialog(
+                        folderName = folder.name,
+                        onDismiss = { finish() },
+                        onUnlock = { passcode ->
+                            if (FolderRepository.verifyPasscode(folder, passcode)) {
+                                isUnlocked = true
+                                true
+                            } else {
+                                FeedbackHelper.show(this@FolderDetailActivity, "Incorrect passcode")
+                                false
                             }
                         }
                     )
-                }
-
-                FolderDetailScreen(
-                    initialFolder = folder,
-                    refreshTick = refreshTick,
-                    onBack = { navigateHome() },
-                    onCamera = { openCamera(it) },
-                    onOpenSettings = { openAppSettings() },
-                    onImportPhotos = {
-                        pickMultiplePhotosLauncher.launch(
-                            PickVisualMediaRequest(PickVisualMedia.ImageOnly)
+                } else {
+                    if (showCleanupDialog) {
+                        AlertDialog(
+                            onDismissRequest = { 
+                                showCleanupDialog = false
+                                pendingImportUris = null
+                            },
+                            title = { Text("Delete Original Photos?") },
+                            text = { Text("The photos have been imported. Do you want to delete the originals from your gallery to save space?") },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    pendingImportUris?.let { uris ->
+                                        try {
+                                            var deletedCount = 0
+                                            uris.forEach { uri ->
+                                                contentResolver.delete(uri, null, null)
+                                                deletedCount++
+                                            }
+                                            FeedbackHelper.show(this@FolderDetailActivity, "Deleted $deletedCount original photo${if (deletedCount == 1) "" else "s"}")
+                                        } catch (_: SecurityException) {
+                                            FeedbackHelper.show(this@FolderDetailActivity, "Failed to delete: Permission denied")
+                                        } catch (_: Exception) {
+                                            FeedbackHelper.show(this@FolderDetailActivity, "Failed to delete originals")
+                                        }
+                                    }
+                                    showCleanupDialog = false
+                                    pendingImportUris = null
+                                }) {
+                                    Text("Delete")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { 
+                                    showCleanupDialog = false 
+                                    pendingImportUris = null
+                                }) {
+                                    Text("Keep")
+                                }
+                            }
                         )
-                    },
-                    onSharePhotos = { sharePhotos(it) },
-                    onFolderRenamed = { currentFolderFile = it }
-                )
+                    }
+
+                    FolderDetailScreen(
+                        initialFolder = folder,
+                        refreshTick = refreshTick,
+                        onBack = { navigateHome() },
+                        onCamera = { openCamera(it) },
+                        onOpenSettings = { openAppSettings() },
+                        onImportPhotos = {
+                            pickMultiplePhotosLauncher.launch(
+                                PickVisualMediaRequest(PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onSharePhotos = { sharePhotos(it) },
+                        onFolderRenamed = { currentFolderFile = it }
+                    )
+                }
             }
         }
     }
@@ -682,7 +701,8 @@ private fun FolderDetailScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Black)
-                        .clickable { previewPhoto = null },
+                        .zIndex(100f)
+                        .clickable { previewPhoto = null }
                 ) {
                     AsyncImage(
                         model = previewPhoto,
@@ -696,28 +716,63 @@ private fun FolderDetailScreen(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .background(Color.Black.copy(alpha = 0.5f))
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
+                            .background(Color.Black.copy(alpha = 0.8f))
+                            .padding(horizontal = 40.dp, vertical = 24.dp)
+                            .clickable(enabled = false) { }, // prevent clicks from dismissing
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { 
-                            previewPhoto?.let { onSharePhotos(listOf(it)) } 
-                        }) {
-                            Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
+                        // Share
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable { previewPhoto?.let { onSharePhotos(listOf(it)) } }
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_share),
+                                contentDescription = "Share",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text("Share", color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
-                        IconButton(onClick = {
-                            selectedPhotos = setOf(previewPhoto!!)
-                            showMoveDialog = true
-                            previewPhoto = null
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Move", tint = Color.White)
+
+                        // Move
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable {
+                                selectedPhotos = setOf(previewPhoto!!)
+                                showMoveDialog = true
+                                previewPhoto = null
+                            }
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_folder),
+                                contentDescription = "Move",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text("Move", color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
-                        IconButton(onClick = {
-                            selectedPhotos = setOf(previewPhoto!!)
-                            showDeleteConfirmDialog = true
-                            previewPhoto = null
-                        }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.White)
+
+                        // Delete
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable {
+                                selectedPhotos = setOf(previewPhoto!!)
+                                showDeleteConfirmDialog = true
+                                previewPhoto = null
+                            }
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_delete),
+                                contentDescription = "Delete",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text("Delete", color = Color.White, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -1051,6 +1106,41 @@ private fun MovePhotosDialog(
             }
         },
         confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun UnlockFolderDialog(
+    folderName: String,
+    onDismiss: () -> Unit,
+    onUnlock: (String) -> Boolean
+) {
+    var passcode by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = { Text("Enter passcode for: $folderName") },
+        text = {
+            OutlinedTextField(
+                value = passcode,
+                onValueChange = { passcode = it },
+                label = { Text("Enter Passcode") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onUnlock(passcode) }) {
+                Text("Unlock")
+            }
+        },
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("Cancel")
